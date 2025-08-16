@@ -1,0 +1,18 @@
+{
+  "logRetentionMinutes": 10,
+  "capture": {
+    "saveLastFrame": true,
+    "outputDir": "captures",
+    "format": "png",
+    "debug": true
+  },
+  "cv": {
+    "thresholdValue": 200,
+    "thresholdType": "THRESH_BINARY",
+    "morphKernelSize": [50, 5],
+    "morphShape": "MORPH_RECT",
+    "roi": { "x": 0, "y": 120, "width": 1920, "height": 740 },
+    "minArea": 100,
+    "maxArea": 10000
+  }
+}
