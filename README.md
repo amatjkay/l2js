@@ -66,7 +66,7 @@ npm start
 
 А при работе FSM (`ScanState`) в логах появляются сводные метрики пайплайна:
 ```
-scanForTargets: fullFrame=F, afterROI=R, afterAreaFilter=A, area[min/avg/max]=…/…/…, time=…ms
+scanForTargets: fullFrame=F, afterROI=R, afterAreaFilter=A, afterSizeFilter=S, afterMerge=M, area[min/avg/max]=…/…/…, time=…ms
 ```
 и сообщение о сохранении отчёта целей:
 ```
@@ -95,11 +95,20 @@ bboxes.json saved to C:\dev\l2js\logs\images\<timestamp>\bboxes.json
     "morphShape": "MORPH_RECT",
     "roi": { "x": 0, "y": 120, "width": 1920, "height": 740 },
     "minArea": 100,
-    "maxArea": 10000
+    "maxArea": 10000,
+    "minWidth": 50,
+    "minHeight": 8,
+    "maxWidth": 350,
+    "maxHeight": 20,
+    "maxWordGapPx": 30,
+    "maxBaselineDeltaPx": 6
   }
 }
 ```
 - `capture.debug`: если true — сохраняет диагностические изображения (raw ROI, grayscale, threshold, morphology) и bboxes.json в `logs/images/<timestamp>/`.
+- `cv.minArea/maxArea`: фильтрация контуров по площади.
+- `cv.minWidth/minHeight/maxWidth/maxHeight`: доп. фильтрация по габаритам bbox (оставляем горизонтальные текстовые метки).
+- `cv.maxWordGapPx/maxBaselineDeltaPx`: объединение соседних сегментов строки в один bbox (учёт пробелов в имени моба).
 - `cv.thresholdType`: одно из `THRESH_BINARY`, `THRESH_BINARY_INV`, `THRESH_OTSU` и т. д.
 - `cv.morphShape`: `MORPH_RECT`, `MORPH_ELLIPSE`, `MORPH_CROSS`.
 - `cv.roi`: регион интереса. Если `width/height == 0`, используется весь кадр. Планируется поддержка изменения ROI «на лету».
@@ -107,8 +116,10 @@ bboxes.json saved to C:\dev\l2js\logs\images\<timestamp>\bboxes.json
 Примечание: ROI используется как отдельный этап анализа. Пайплайн считает:
 - `fullFrame` — число контуров на всём кадре;
 - `afterROI` — число контуров внутри ROI;
-- `afterAreaFilter` — число контуров после фильтрации по площади (`minArea/maxArea`).
-Координаты целей в `bboxes.json` приводятся к абсолютным экранным координатам (смещение ROI уже учтено).
+- `afterAreaFilter` — число контуров после фильтрации по площади (`minArea/maxArea`);
+- `afterSizeFilter` — число целей после фильтрации по размерам bbox (min/max width/height);
+- `afterMerge` — число целей после объединения сегментов строки (несколько слов/пробелов → 1 bbox).
+Координаты целей в `bboxes.json` приводятся к абсолютным экранным координатам (смещение ROI уже учтено). Targets сохраняются уже ПОСЛЕ объединения.
 
 ---
 
@@ -123,7 +134,7 @@ bboxes.json saved to C:\dev\l2js\logs\images\<timestamp>\bboxes.json
 - Освобождение всех Mat/временных объектов.
 
 Файл: `src/core/SmokeTest.ts` — демонстрация основной цепочки.
-Файл: `src/core/Scan.ts` — основная логика сканирования для FSM (подсчёт fullFrame/afterROI/afterAreaFilter, сохранение bboxes.json с абсолютными координатами целей).
+Файл: `src/core/Scan.ts` — основная логика сканирования для FSM (подсчёт fullFrame/afterROI/afterAreaFilter/afterSizeFilter/afterMerge, сохранение bboxes.json с абсолютными координатами целей). Включает постобработку объединения сегментов одной строки по параметрам `maxWordGapPx` и `maxBaselineDeltaPx`.
 
 ---
 

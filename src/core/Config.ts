@@ -22,6 +22,14 @@ export interface AppSettings {
     /** Минимальная/максимальная площадь контура для фильтрации. */
     minArea?: number;
     maxArea?: number;
+    /** Доп. фильтрация по габаритам прямоугольника */
+    minWidth?: number;
+    minHeight?: number;
+    maxWidth?: number;
+    maxHeight?: number;
+    /** Параметры объединения сегментов текста (пробелы внутри одной строки) */
+    maxWordGapPx?: number;        // максимальный горизонтальный зазор между сегментами для слияния
+    maxBaselineDeltaPx?: number;  // допуск по вертикали (по базовой линии), чтобы считать сегменты одной строкой
   };
 }
 
@@ -42,6 +50,12 @@ const DEFAULT_SETTINGS: AppSettings = {
     roi: { x: 0, y: 0, width: 0, height: 0 },
     minArea: 100,
     maxArea: 10000,
+    minWidth: 50,
+    minHeight: 8,
+    maxWidth: 350,
+    maxHeight: 20,
+    maxWordGapPx: 30,
+    maxBaselineDeltaPx: 6,
   },
 };
 

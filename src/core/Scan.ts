@@ -88,11 +88,31 @@ export async function scanForTargets(): Promise<Target[]> {
   const filtered = results.filter((t) => t.area >= minArea && t.area <= maxArea);
   const afterAreaCount = filtered.length;
 
+  // 5) Доп. фильтрация по габаритам bbox (ширина/высота)
+  const minW = cvCfg.minWidth ?? 0;
+  const minH = cvCfg.minHeight ?? 0;
+  const maxW = cvCfg.maxWidth ?? Number.MAX_SAFE_INTEGER;
+  const maxH = cvCfg.maxHeight ?? Number.MAX_SAFE_INTEGER;
+  const sizeFiltered = filtered.filter(
+    (t) =>
+      t.bbox.width >= minW &&
+      t.bbox.height >= minH &&
+      t.bbox.width <= maxW &&
+      t.bbox.height <= maxH
+  );
+  Logger.info(`afterSizeFilter: targets=${sizeFiltered.length}`);
+
+  // 6) Объединение сегментов текста по базовой линии (учёт пробелов как части имени)
+  const gap = cvCfg.maxWordGapPx ?? 30;
+  const baselineDelta = cvCfg.maxBaselineDeltaPx ?? 6;
+  const merged = mergeLineSegments(sizeFiltered, gap, baselineDelta);
+  Logger.info(`afterMerge: targets=${merged.length}`);
+
   // Метрики и лог
-  const metrics = computeAreaStats(filtered.map((t) => t.area));
+  const metrics = computeAreaStats(merged.map((t) => t.area));
   const totalMs = Date.now() - tStart;
   Logger.info(
-    `scanForTargets: fullFrame=${fullCount}, afterROI=${afterRoiCount}, afterAreaFilter=${afterAreaCount}, area[min/avg/max]=${metrics.min}/${metrics.avg.toFixed(1)}/${metrics.max}, time=${totalMs}ms`
+    `scanForTargets: fullFrame=${fullCount}, afterROI=${afterRoiCount}, afterAreaFilter=${afterAreaCount}, afterSizeFilter=${sizeFiltered.length}, afterMerge=${merged.length}, area[min/avg/max]=${metrics.min}/${metrics.avg.toFixed(1)}/${metrics.max}, time=${totalMs}ms`
   );
 
   // Сохранение bboxes.json
@@ -104,9 +124,9 @@ export async function scanForTargets(): Promise<Target[]> {
       roi: cvCfg.roi || null,
       minArea,
       maxArea,
-      counts: { fullFrame: fullCount, afterROI: afterRoiCount, afterAreaFilter: afterAreaCount },
+      counts: { fullFrame: fullCount, afterROI: afterRoiCount, afterAreaFilter: afterAreaCount, afterSizeFilter: sizeFiltered.length, afterMerge: merged.length },
       metrics,
-      targets: filtered,
+      targets: merged,
     };
     const outPath = path.join(outDir, 'bboxes.json');
     fs.writeFileSync(outPath, JSON.stringify(payload, null, 2), 'utf-8');
@@ -123,7 +143,73 @@ export async function scanForTargets(): Promise<Target[]> {
   grayFull.delete();
   matFull.delete();
 
-  return filtered;
+  return merged;
+
+  /**
+   * Объединяет горизонтально выровненные сегменты одной строки в единый bbox,
+   * если горизонтальный зазор <= maxGap и разница по базовой линии <= baselineDelta.
+   */
+  function mergeLineSegments(items: Target[], maxGap: number, baselineDelta: number): Target[] {
+    if (items.length <= 1) return items.slice();
+    // Сортируем по y (базовой линии), затем по x
+    const sorted = items.slice().sort((a, b) => {
+      const ay = a.bbox.y + a.bbox.height / 2;
+      const by = b.bbox.y + b.bbox.height / 2;
+      if (Math.abs(ay - by) > baselineDelta) return ay - by; // разные строки
+      return a.bbox.x - b.bbox.x;
+    });
+
+    // Группируем по строкам (по близости по y)
+    const lines: Target[][] = [];
+    for (const t of sorted) {
+      const cy = t.bbox.y + t.bbox.height / 2;
+      let placed = false;
+      for (const line of lines) {
+        const ly = line.reduce((acc, it) => acc + (it.bbox.y + it.bbox.height / 2), 0) / line.length;
+        if (Math.abs(cy - ly) <= baselineDelta) {
+          line.push(t);
+          placed = true;
+          break;
+        }
+      }
+      if (!placed) lines.push([t]);
+    }
+
+    // Внутри каждой строки объединяем соседние сегменты по x при малом зазоре
+    const out: Target[] = [];
+    for (const line of lines) {
+      line.sort((a, b) => a.bbox.x - b.bbox.x);
+      let acc: Target | null = null;
+      for (const seg of line) {
+        if (!acc) {
+          acc = { ...seg, bbox: { ...seg.bbox }, area: seg.area };
+          continue;
+        }
+        const accRight = acc.bbox.x + acc.bbox.width;
+        const gapPx = seg.bbox.x - accRight; // >0 если справа
+        const sameLine = Math.abs((seg.bbox.y + seg.bbox.height / 2) - (acc.bbox.y + acc.bbox.height / 2)) <= baselineDelta;
+        if (sameLine && gapPx >= 0 && gapPx <= maxGap) {
+          // объединяем: расширяем bbox вправо и обновляем метрики
+          const newRight = Math.max(accRight, seg.bbox.x + seg.bbox.width);
+          const newLeft = Math.min(acc.bbox.x, seg.bbox.x);
+          const newTop = Math.min(acc.bbox.y, seg.bbox.y);
+          const newBottom = Math.max(acc.bbox.y + acc.bbox.height, seg.bbox.y + seg.bbox.height);
+          acc.bbox.x = newLeft;
+          acc.bbox.y = newTop;
+          acc.bbox.width = newRight - newLeft;
+          acc.bbox.height = newBottom - newTop;
+          acc.area += seg.area; // суммируем площади как приближение
+          acc.cx = acc.bbox.x + acc.bbox.width / 2;
+          acc.cy = acc.bbox.y + acc.bbox.height / 2;
+        } else {
+          out.push(acc);
+          acc = { ...seg, bbox: { ...seg.bbox }, area: seg.area };
+        }
+      }
+      if (acc) out.push(acc);
+    }
+    return out;
+  }
 }
 
 /** Преобразует строковый тип порога из настроек в соответствующую константу OpenCV. */

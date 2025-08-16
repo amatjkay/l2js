@@ -13,6 +13,12 @@
     "morphShape": "MORPH_RECT",
     "roi": { "x": 0, "y": 120, "width": 1920, "height": 740 },
     "minArea": 100,
-    "maxArea": 10000
+    "maxArea": 10000,
+    "minWidth": 50,
+    "minHeight": 8,
+    "maxWidth": 350,
+    "maxHeight": 20,
+    "maxWordGapPx": 30,
+    "maxBaselineDeltaPx": 6
   }
 }
