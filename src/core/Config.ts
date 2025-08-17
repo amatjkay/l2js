@@ -22,8 +22,11 @@ export interface AppSettings {
       port?: string; // e.g. 'COM5'
       baudRate?: number; // 115200
       writeTimeoutMs?: number; // 300
+      readTimeoutMs?: number; // 800
       retries?: number; // 1-2
     };
+    camera?: { dxMin?: number; dxMax?: number; pauseMs?: number };
+    delays?: { beforeMoveMs?: number; afterMoveMs?: number; beforeClickMs?: number; afterClickMs?: number };
   };
   cv?: {
     thresholdValue?: number;
@@ -31,6 +34,7 @@ export interface AppSettings {
     morphKernelSize?: [number, number];
     morphShape?: string; // e.g. 'MORPH_RECT'
     roi?: { x: number; y: number; width: number; height: number };
+    selection?: { referencePoint?: 'screenCenter' | 'cursorPosition' };
     /** Минимальная/максимальная площадь контура для фильтрации. */
     minArea?: number;
     maxArea?: number;
@@ -59,7 +63,9 @@ const DEFAULT_SETTINGS: AppSettings = {
     moveDelayMs: 10,
     clickDelayMs: 50,
     mode: 'powershell',
-    serial: { port: '', baudRate: 115200, writeTimeoutMs: 300, retries: 1 },
+    serial: { port: '', baudRate: 115200, writeTimeoutMs: 300, readTimeoutMs: 800, retries: 1 },
+    camera: { dxMin: 80, dxMax: 160, pauseMs: 150 },
+    delays: { beforeMoveMs: 0, afterMoveMs: 70, beforeClickMs: 30, afterClickMs: 70 },
   },
   cv: {
     thresholdValue: 200,
@@ -67,6 +73,7 @@ const DEFAULT_SETTINGS: AppSettings = {
     morphKernelSize: [50, 5],
     morphShape: 'MORPH_RECT',
     roi: { x: 0, y: 0, width: 0, height: 0 },
+    selection: { referencePoint: 'screenCenter' },
     minArea: 100,
     maxArea: 10000,
     minWidth: 50,

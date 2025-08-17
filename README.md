@@ -89,9 +89,19 @@ bboxes.json saved to C:\dev\l2js\logs\images\<timestamp>\bboxes.json
     "debug": true
   },
   "actions": {
-    "enableActions": false,
+    "enableActions": true,
     "moveDelayMs": 10,
-    "clickDelayMs": 50
+    "clickDelayMs": 50,
+    "mode": "arduino",
+    "serial": {
+      "port": "COM5",
+      "baudRate": 115200,
+      "writeTimeoutMs": 300,
+      "readTimeoutMs": 1500,
+      "retries": 3
+    },
+    "camera": { "dxMin": 30, "dxMax": 30, "pauseMs": 200 },
+    "delays": { "beforeMoveMs": 20, "afterMoveMs": 100, "beforeClickMs": 20, "afterClickMs": 50 }
   },
   "cv": {
     "thresholdValue": 190,
@@ -99,6 +109,7 @@ bboxes.json saved to C:\dev\l2js\logs\images\<timestamp>\bboxes.json
     "morphKernelSize": [48, 4],
     "morphShape": "MORPH_RECT",
     "roi": { "x": 0, "y": 120, "width": 1920, "height": 740 },
+    "selection": { "referencePoint": "screenCenter" },
     "minArea": 70,
     "maxArea": 10000,
     "minWidth": 20,
@@ -123,8 +134,12 @@ bboxes.json saved to C:\dev\l2js\logs\images\<timestamp>\bboxes.json
 - `cv.maxWordGapPx/maxBaselineDeltaPx`: объединение соседних сегментов строки в один bbox (учёт пробелов в имени моба). Для длинных имён можно повышать `maxWordGapPx`.
 - `cv.exclusionZones`: список прямоугольников в абсолютных координатах экрана, где цели исключаются (например, нижняя UI-полоса).
 - `cv.flatness`: параметры эвристики «ровности» базовой линии и разделения слипшихся боксов по вертикальной «долине» (минимуму плотности столбцов) в морфологически закрытом изображении.
- - `actions.enableActions`: если false — режим dry‑run (только логи, без движений/кликов). Если true — включаются действия (перемещение курсора и клик через PowerShell/user32.dll).
- - `actions.moveDelayMs/clickDelayMs`: небольшие задержки после перемещения/клика.
+ - `actions.enableActions`: если false — режим dry‑run (только логи, без движений/кликов). Если true — включаются действия (перемещение курсора и клик через PowerShell/user32.dll или Arduino).
+ - `actions.moveDelayMs/clickDelayMs`: базовые задержки после перемещения/клика.
+ - `actions.serial.readTimeoutMs/retries`: диагностика Serial (таймаут чтения и число ретраев для `ping/status` и команд).
+ - `actions.camera`: параметры случайного поворота камеры в `ScanState` при отсутствии целей.
+ - `actions.delays`: безопасные паузы вокруг наведения и клика в `TargetState`.
+ - `cv.selection.referencePoint`: выбор точки отсчёта для таргетинга (`screenCenter` | `cursorPosition`).
 - `cv.thresholdType`: одно из `THRESH_BINARY`, `THRESH_BINARY_INV`, `THRESH_OTSU` и т. д.
 - `cv.morphShape`: `MORPH_RECT`, `MORPH_ELLIPSE`, `MORPH_CROSS`.
 - `cv.roi`: регион интереса. Если `width/height == 0`, используется весь кадр. Планируется поддержка изменения ROI «на лету».
@@ -138,6 +153,14 @@ bboxes.json saved to C:\dev\l2js\logs\images\<timestamp>\bboxes.json
 - `afterFlatness` — число целей после эвристики «ровности»/разделения;
 - `afterMerge` — число целей после объединения сегментов одной строки (несколько слов/пробелов → 1 bbox).
 Координаты целей в `bboxes.json` приводятся к абсолютным экранным координатам (смещение ROI уже учтено). Targets сохраняются уже ПОСЛЕ объединения.
+
+---
+
+## Arduino mode и безопасность
+- Режим: `actions.mode="arduino"` активирует команды Arduino Leonardo/Micro (CAMERA, BIGMOVE, SCROLL, pressKey, LCLICK).
+- FocusGuard: действия выполняются только если активно окно игры (titleRegex, processFileExact). При блокировке в лог пишутся активные `title/processFile/className/hwnd`.
+- Диагностика Serial: при первом обращении ожидается лог `serial: cold-open 2.5s`. Для нестабильной связи увеличьте `actions.serial.readTimeoutMs` и `actions.serial.retries`.
+- Безопасность: включайте `actions.enableActions=true` только при активном окне игры. Для сухих прогонов установите `false`.
 
 ---
 

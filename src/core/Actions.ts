@@ -13,6 +13,7 @@ export interface ActionsConfig {
     port?: string;
     baudRate?: number;
     writeTimeoutMs?: number;
+    readTimeoutMs?: number;
     retries?: number;
   };
 }
@@ -31,6 +32,8 @@ function runPwsh(cmd: string): Promise<void> {
   });
 }
 
+let _serialInitialized = false;
+
 // PowerShell: write single line to SerialPort
 function runPwshSerialWrite(opts: Required<NonNullable<ActionsConfig['serial']>>, line: string): Promise<void> {
   const port = opts.port;
@@ -41,7 +44,7 @@ Add-Type -AssemblyName System.IO.Ports;
 $sp = New-Object System.IO.Ports.SerialPort '${port}', ${baud}, 'None', 8, 'One';
 $sp.NewLine = [Environment]::NewLine;
 $sp.WriteTimeout = ${timeout};
-try { $sp.Open(); $sp.WriteLine('${line}'); Start-Sleep -Milliseconds 20 } finally { if ($sp -and $sp.IsOpen) { $sp.Close() } }
+try { $sp.Open(); ${_serialInitialized ? '' : 'Start-Sleep -Milliseconds 2500;'} $sp.WriteLine('${line}'); Start-Sleep -Milliseconds 20 } finally { if ($sp -and $sp.IsOpen) { $sp.Close() } }
 `;
   // Guard: send only when game window is active
   return ensureGameActive().then((ok) => {
@@ -49,7 +52,47 @@ try { $sp.Open(); $sp.WriteLine('${line}'); Start-Sleep -Milliseconds 20 } final
       Logger.warn('Skip serial "%s" because game window is not active', line);
       return;
     }
+    if (!_serialInitialized) { Logger.info('serial: cold-open 2.5s'); }
+    _serialInitialized = true;
     return runPwsh(ps);
+  });
+}
+
+// PowerShell: write line and read one response line
+function runPwshSerialQuery(opts: Required<NonNullable<ActionsConfig['serial']>>, line: string, readTimeoutMs = 800): Promise<string> {
+  const port = opts.port;
+  const baud = opts.baudRate ?? 115200;
+  const timeout = opts.writeTimeoutMs ?? 300;
+  const ps = `
+Add-Type -AssemblyName System.IO.Ports;
+$sp = New-Object System.IO.Ports.SerialPort '${port}', ${baud}, 'None', 8, 'One';
+$sp.NewLine = [Environment]::NewLine;
+$sp.WriteTimeout = ${timeout};
+$sp.ReadTimeout = ${readTimeoutMs};
+try {
+  $sp.Open(); ${_serialInitialized ? '' : 'Start-Sleep -Milliseconds 2500;'}
+  $sp.WriteLine('${line}'); Start-Sleep -Milliseconds 30;
+  $resp = ''
+  try { $resp = $sp.ReadLine() } catch {}
+  if (-not $resp) { try { $resp = $sp.ReadExisting() } catch {} }
+  Write-Output $resp
+} finally { if ($sp -and $sp.IsOpen) { $sp.Close() } }
+`;
+  return new Promise((resolve, reject) => {
+    ensureGameActive().then((ok) => {
+      if (!ok) { Logger.warn('Skip serial query "%s" because game window is not active', line); return resolve(''); }
+      if (!_serialInitialized) { Logger.info('serial: cold-open 2.5s'); }
+      _serialInitialized = true;
+      const psProc = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', ps], { windowsHide: true });
+      let out = '';
+      let err = '';
+      psProc.stdout.on('data', (d) => (out += d.toString()));
+      psProc.stderr.on('data', (d) => (err += d.toString()));
+      psProc.on('error', reject);
+      psProc.on('close', (code) => {
+        if (code === 0) resolve(out.trim()); else reject(new Error(err || `pwsh exited ${code}`));
+      });
+    });
   });
 }
 
@@ -110,5 +153,106 @@ export class Actions {
       await runPwsh(psMouseClick);
     }
     if (this.cfg.clickDelayMs) await new Promise(r => setTimeout(r, this.cfg.clickDelayMs));
+  }
+
+  /** Alias for mouseClick() */
+  async click(): Promise<void> { return this.mouseClick(); }
+
+  /** Arduino: rotate camera by dx,dy (relative) */
+  async cameraRotate(dx: number, dy: number): Promise<void> {
+    if (!this.cfg.enableActions) { Logger.info(`[dry-run] CAMERA ${dx} ${dy}`); return; }
+    if (this.cfg.mode !== 'arduino') { Logger.info('[noop] cameraRotate: not arduino mode'); return; }
+    const serial = this.cfg.serial; if (!serial?.port) { Logger.error('cameraRotate: no serial.port'); return; }
+    const opts = { port: serial.port, baudRate: serial.baudRate ?? 115200, writeTimeoutMs: serial.writeTimeoutMs ?? 300, readTimeoutMs: serial.readTimeoutMs ?? 800, retries: serial.retries ?? 1 } as Required<NonNullable<ActionsConfig['serial']>>;
+    let lastErr: unknown = null;
+    for (let i = 1; i <= (opts.retries || 1); i++) {
+      try { await runPwshSerialWrite(opts, `CAMERA ${Math.round(dx)} ${Math.round(dy)}`); lastErr = null; break; }
+      catch (e) { lastErr = e; Logger.warn(`serial write failed (attempt ${i}/${opts.retries}): ${(e as Error).message}`); await new Promise(r=>setTimeout(r,50)); }
+    }
+    if (lastErr) Logger.error(`cameraRotate: failed after ${opts.retries} attempts`);
+  }
+
+  /** Arduino: large relative mouse move */
+  async bigMove(dx: number, dy: number): Promise<void> {
+    if (!this.cfg.enableActions) { Logger.info(`[dry-run] BIGMOVE ${dx} ${dy}`); return; }
+    if (this.cfg.mode !== 'arduino') { await this.moveMouseSmooth(dx, dy); return; }
+    const serial = this.cfg.serial; if (!serial?.port) { Logger.error('bigMove: no serial.port'); return; }
+    const opts = { port: serial.port, baudRate: serial.baudRate ?? 115200, writeTimeoutMs: serial.writeTimeoutMs ?? 300, readTimeoutMs: serial.readTimeoutMs ?? 800, retries: serial.retries ?? 1 } as Required<NonNullable<ActionsConfig['serial']>>;
+    let lastErr: unknown = null;
+    for (let i = 1; i <= (opts.retries || 1); i++) {
+      try { await runPwshSerialWrite(opts, `BIGMOVE ${Math.round(dx)} ${Math.round(dy)}`); lastErr = null; break; }
+      catch (e) { lastErr = e; Logger.warn(`serial write failed (attempt ${i}/${opts.retries}): ${(e as Error).message}`); await new Promise(r=>setTimeout(r,50)); }
+    }
+    if (lastErr) Logger.error(`bigMove: failed after ${opts.retries} attempts`);
+  }
+
+  /** Arduino: scroll */
+  async scroll(amount: number): Promise<void> {
+    if (!this.cfg.enableActions) { Logger.info(`[dry-run] SCROLL ${amount}`); return; }
+    if (this.cfg.mode !== 'arduino') { Logger.info('[noop] scroll: not arduino mode'); return; }
+    const serial = this.cfg.serial; if (!serial?.port) { Logger.error('scroll: no serial.port'); return; }
+    const opts = { port: serial.port, baudRate: serial.baudRate ?? 115200, writeTimeoutMs: serial.writeTimeoutMs ?? 300, readTimeoutMs: serial.readTimeoutMs ?? 800, retries: serial.retries ?? 1 } as Required<NonNullable<ActionsConfig['serial']>>;
+    let lastErr: unknown = null;
+    for (let i = 1; i <= (opts.retries || 1); i++) {
+      try { await runPwshSerialWrite(opts, `SCROLL ${Math.round(amount)}`); lastErr = null; break; }
+      catch (e) { lastErr = e; Logger.warn(`serial write failed (attempt ${i}/${opts.retries}): ${(e as Error).message}`); await new Promise(r=>setTimeout(r,50)); }
+    }
+    if (lastErr) Logger.error(`scroll: failed after ${opts.retries} attempts`);
+  }
+
+  /** Arduino: press key (F1..F12, ESC, ENTER, SPACE, TAB) */
+  async pressKey(name: string): Promise<void> {
+    if (!this.cfg.enableActions) { Logger.info(`[dry-run] KEY ${name}`); return; }
+    if (this.cfg.mode !== 'arduino') { Logger.info('[noop] pressKey: not arduino mode'); return; }
+    const serial = this.cfg.serial; if (!serial?.port) { Logger.error('pressKey: no serial.port'); return; }
+    const opts = { port: serial.port, baudRate: serial.baudRate ?? 115200, writeTimeoutMs: serial.writeTimeoutMs ?? 300, readTimeoutMs: serial.readTimeoutMs ?? 800, retries: serial.retries ?? 1 } as Required<NonNullable<ActionsConfig['serial']>>;
+    let lastErr: unknown = null;
+    for (let i = 1; i <= (opts.retries || 1); i++) {
+      try { await runPwshSerialWrite(opts, name.toUpperCase()); lastErr = null; break; }
+      catch (e) { lastErr = e; Logger.warn(`serial write failed (attempt ${i}/${opts.retries}): ${(e as Error).message}`); await new Promise(r=>setTimeout(r,50)); }
+    }
+    if (lastErr) Logger.error(`pressKey: failed after ${opts.retries} attempts`);
+  }
+
+  async ping(): Promise<string> {
+    const serial = this.cfg.serial; if (!serial?.port) { return ''; }
+    const opts = { port: serial.port, baudRate: serial.baudRate ?? 115200, writeTimeoutMs: serial.writeTimeoutMs ?? 300, readTimeoutMs: serial.readTimeoutMs ?? 800, retries: serial.retries ?? 1 } as Required<NonNullable<ActionsConfig['serial']>>;
+    let lastErr: unknown = null; let resp = '';
+    for (let i = 1; i <= (opts.retries || 1); i++) {
+      try { resp = await runPwshSerialQuery(opts, 'PING', opts.readTimeoutMs); lastErr = null; break; }
+      catch (e) { lastErr = e; Logger.warn(`serial read failed (attempt ${i}/${opts.retries}): ${(e as Error).message}`); await new Promise(r=>setTimeout(r,50)); }
+    }
+    if (lastErr) Logger.error(`ping: failed after ${opts.retries} attempts`);
+    return resp;
+  }
+
+  async status(): Promise<string> {
+    const serial = this.cfg.serial; if (!serial?.port) { return ''; }
+    const opts = { port: serial.port, baudRate: serial.baudRate ?? 115200, writeTimeoutMs: serial.writeTimeoutMs ?? 300, readTimeoutMs: serial.readTimeoutMs ?? 800, retries: serial.retries ?? 1 } as Required<NonNullable<ActionsConfig['serial']>>;
+    let lastErr: unknown = null; let resp = '';
+    for (let i = 1; i <= (opts.retries || 1); i++) {
+      try { resp = await runPwshSerialQuery(opts, 'STATUS', opts.readTimeoutMs); lastErr = null; break; }
+      catch (e) { lastErr = e; Logger.warn(`serial read failed (attempt ${i}/${opts.retries}): ${(e as Error).message}`); await new Promise(r=>setTimeout(r,50)); }
+    }
+    if (lastErr) Logger.error(`status: failed after ${opts.retries} attempts`);
+    return resp;
+  }
+
+  async setMGain(n: number): Promise<void> {
+    const serial = this.cfg.serial; if (!serial?.port) { return; }
+    const opts = { port: serial.port, baudRate: serial.baudRate ?? 115200, writeTimeoutMs: serial.writeTimeoutMs ?? 300, retries: serial.retries ?? 1 } as Required<NonNullable<ActionsConfig['serial']>>;
+    await runPwshSerialWrite(opts, `MGAIN ${Math.round(n)}`);
+  }
+
+  async setMRepeat(n: number): Promise<void> {
+    const serial = this.cfg.serial; if (!serial?.port) { return; }
+    const opts = { port: serial.port, baudRate: serial.baudRate ?? 115200, writeTimeoutMs: serial.writeTimeoutMs ?? 300, retries: serial.retries ?? 1 } as Required<NonNullable<ActionsConfig['serial']>>;
+    await runPwshSerialWrite(opts, `MREPEAT ${Math.round(n)}`);
+  }
+
+  async setSmoothness(n: number): Promise<void> {
+    const serial = this.cfg.serial; if (!serial?.port) { return; }
+    const opts = { port: serial.port, baudRate: serial.baudRate ?? 115200, writeTimeoutMs: serial.writeTimeoutMs ?? 300, retries: serial.retries ?? 1 } as Required<NonNullable<ActionsConfig['serial']>>;
+    await runPwshSerialWrite(opts, `SMOOTHNESS ${Math.round(n)}`);
   }
 }

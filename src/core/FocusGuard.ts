@@ -1,20 +1,28 @@
-import { isGameActive, GameWindowMatch } from './WinWindow';
+import { isGameActive, GameWindowMatch, getActiveWindowInfo } from './WinWindow';
 import { createLogger } from './Logger';
 
 const log = createLogger();
 
-// Defaults based on user's data: title 'LU4', process 'lu4.bin'
+// Defaults based on user's data: title 'LU4', process file 'lu4.bin'
 const defaultMatch: GameWindowMatch = {
   titleRegex: '^LU4',
-  // processName in Get-Process is usually without extension; keep loose
-  processName: 'lu4',
+  processFileExact: 'lu4.bin',
 };
 
 export async function ensureGameActive(match: Partial<GameWindowMatch> = {}): Promise<boolean> {
   const m: GameWindowMatch = { ...defaultMatch, ...match } as GameWindowMatch;
   const ok = await isGameActive(m);
   if (!ok) {
-    log.warn('Game window is not active. Skip action. Expected titleRegex=%s processName=%s', m.titleRegex, m.processName);
+    const info = await getActiveWindowInfo();
+    log.warn(
+      'Game window is not active. Skip action. Expected titleRegex=%s processFileExact=%s; active: title="%s" processFile=%s className=%s hwnd=%s',
+      m.titleRegex,
+      m.processFileExact,
+      info.title,
+      info.processFile || 'null',
+      info.className || 'null',
+      String(info.hwnd ?? 'null'),
+    );
   }
   return ok;
 }
