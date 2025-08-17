@@ -1,5 +1,6 @@
 import { spawn } from 'child_process';
 import { createLogger } from './Logger';
+import { ensureGameActive } from './FocusGuard';
 
 const Logger = createLogger();
 
@@ -42,7 +43,14 @@ $sp.NewLine = [Environment]::NewLine;
 $sp.WriteTimeout = ${timeout};
 try { $sp.Open(); $sp.WriteLine('${line}'); Start-Sleep -Milliseconds 20 } finally { if ($sp -and $sp.IsOpen) { $sp.Close() } }
 `;
-  return runPwsh(ps);
+  // Guard: send only when game window is active
+  return ensureGameActive().then((ok) => {
+    if (!ok) {
+      Logger.warn('Skip serial "%s" because game window is not active', line);
+      return;
+    }
+    return runPwsh(ps);
+  });
 }
 
 // PowerShell helpers using user32.dll
