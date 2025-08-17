@@ -13,6 +13,11 @@ export interface AppSettings {
     format: 'png' | 'jpg';
     debug?: boolean;
   };
+  actions?: {
+    enableActions?: boolean;
+    moveDelayMs?: number;
+    clickDelayMs?: number;
+  };
   cv?: {
     thresholdValue?: number;
     thresholdType?: string; // e.g. 'THRESH_BINARY'
@@ -41,6 +46,11 @@ const DEFAULT_SETTINGS: AppSettings = {
     outputDir: 'captures',
     format: 'png',
     debug: false,
+  },
+  actions: {
+    enableActions: false,
+    moveDelayMs: 10,
+    clickDelayMs: 50,
   },
   cv: {
     thresholdValue: 200,

@@ -1,6 +1,8 @@
 import { IState, IStateContext } from '../State';
 import { createLogger } from '../../core/Logger';
 import { IdleState } from './IdleState';
+import { loadSettings } from '../../core/Config';
+import { Actions } from '../../core/Actions';
 
 const Logger = createLogger();
 
@@ -17,6 +19,16 @@ export class TargetState implements IState {
           0
         )}, center=(${t.cx.toFixed(1)}, ${t.cy.toFixed(1)})`
       );
+
+      // Наведение и клик по центру цели (если actions.enableActions=true)
+      const settings = loadSettings();
+      const actions = new Actions(settings.actions || {});
+      try {
+        await actions.moveMouseSmooth(t.cx, t.cy);
+        await actions.mouseClick();
+      } catch (e) {
+        Logger.error(`TargetState: ошибка эмуляции действий: ${(e as Error).message}`);
+      }
     }
   }
 
