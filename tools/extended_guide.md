@@ -22,9 +22,9 @@
 ### 1.3 package.json и библиотеки
 
 - `npm init -y`
-- Установить зависимости:
-`npm install opencv4nodejs robotjs node-screenshots winston`
-- Если будут сложности с сборкой `opencv4nodejs`, взять [готовые инструкции](https://github.com/justadudewhohacks/opencv4nodejs#installation).
+- Установить зависимости (актуально):
+`npm install @techstark/opencv-js robotjs screenshot-desktop winston`
+- Примечание: ранее использовался `opencv4nodejs`, но из-за нативной сборки (node-gyp/MSBuild) он был заменён на WebAssembly-версию OpenCV.js — `@techstark/opencv-js`.
 - Установить типы:
 `npm install --save-dev @types/node @types/robotjs`
 
@@ -110,7 +110,7 @@
 
 ### 3.3 Подключение и тестирование OpenCV
 
-- Импортировать opencv4nodejs; научиться читать Buffer → Mat, проводить конвертацию в grayscale, бинаризацию.
+- Импортировать OpenCV.js (`@techstark/opencv-js`); научиться формировать `cv.Mat` из RGBA-буфера, проводить конвертацию в grayscale и бинаризацию.
 - Проверить на скриншотах: grayscale, threshold, сохранение выходных файлов.
 
 

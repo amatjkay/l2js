@@ -10,8 +10,8 @@
 
 1. Установить Node.js (LTS) и TypeScript (`npm install -g typescript ts-node`).
 2. Создать структуру проекта, инициализировать `package.json`.
-3. Установить необходимые библиотеки:
-    - `opencv4nodejs` (или `@u4/opencv4nodejs`), `robotjs`, `node-screenshots`, `winston`, `@types/node`.
+3. Установить необходимые библиотеки (актуально):
+    - `@techstark/opencv-js` (OpenCV.js, WebAssembly), `screenshot-desktop`, `robotjs`, `winston`, `@types/node`.
 4. Настроить TypeScript (`tsconfig.json`): задать output, target, strict options.
 5. Создать базовые конфигурационные файлы (`settings.json`).
 6. Git init и .gitignore, подключить систему контроля версий.
@@ -42,8 +42,8 @@
 **Шаги:**
 
 1. Освоить захват экрана с помощью `node-screenshots` или `screenshot-desktop`.
-2. Реализовать метод быстрой вырезки ROI из скриншота (реализация обрабатываемой зоны).
-3. Подключить OpenCV-модуль. Научиться конвертировать raw image → матрицу CV.
+2. Реализовать метод быстрой вырезки ROI из скриншота (обрезка на этапе RGBA до формирования `cv.Mat`).
+3. Подключить OpenCV.js (`@techstark/opencv-js`). Научиться конвертировать RGBA-буфер → `cv.Mat`.
 4. Создать базовые функции преобразования изображений: перевод в grayscale, бинаризация.
 5. Визуализировать полученные изображения (вывод в файл или окно).
 6. Проверить производительность: добиться <100 мс на полный захват и первичную обработку.

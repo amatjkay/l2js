@@ -78,7 +78,7 @@ bboxes.json saved to C:\dev\l2js\logs\images\<timestamp>\bboxes.json
 ## Конфигурация (settings.json)
 Файл: `settings.json`
 
-Минимальная конфигурация:
+Актуальный пример конфигурации:
 ```
 {
   "logRetentionMinutes": 10,
@@ -89,36 +89,47 @@ bboxes.json saved to C:\dev\l2js\logs\images\<timestamp>\bboxes.json
     "debug": true
   },
   "cv": {
-    "thresholdValue": 200,
+    "thresholdValue": 190,
     "thresholdType": "THRESH_BINARY",
-    "morphKernelSize": [50, 5],
+    "morphKernelSize": [48, 4],
     "morphShape": "MORPH_RECT",
     "roi": { "x": 0, "y": 120, "width": 1920, "height": 740 },
-    "minArea": 100,
+    "minArea": 70,
     "maxArea": 10000,
-    "minWidth": 50,
-    "minHeight": 8,
+    "minWidth": 20,
+    "minHeight": 12,
     "maxWidth": 350,
-    "maxHeight": 20,
-    "maxWordGapPx": 30,
-    "maxBaselineDeltaPx": 6
+    "maxHeight": 50,
+    "maxWordGapPx": 50,
+    "maxBaselineDeltaPx": 6,
+    "exclusionZones": [ { "x": 0, "y": 560, "width": 1920, "height": 180 } ],
+    "flatness": {
+      "stdThreshold": 1.2,
+      "minFlatRatio": 0.6,
+      "minValleyRatio": 0.45,
+      "minSplitWidth": 20
+    }
   }
 }
 ```
-- `capture.debug`: если true — сохраняет диагностические изображения (raw ROI, grayscale, threshold, morphology) и bboxes.json в `logs/images/<timestamp>/`.
+- `capture.debug`: если true — сохраняет диагностические изображения (raw ROI, grayscale, threshold, morphology и overlay-версии с bbox и подписями) и bboxes.json в `logs/images/<timestamp>/`.
 - `cv.minArea/maxArea`: фильтрация контуров по площади.
-- `cv.minWidth/minHeight/maxWidth/maxHeight`: доп. фильтрация по габаритам bbox (оставляем горизонтальные текстовые метки).
-- `cv.maxWordGapPx/maxBaselineDeltaPx`: объединение соседних сегментов строки в один bbox (учёт пробелов в имени моба).
+- `cv.minWidth/minHeight/maxWidth/maxHeight`: доп. фильтрация по габаритам bbox (оставляем текстовые метки; увеличенный `maxHeight` позволяет учитывать случаи, когда два имени расположены друг над другом и должны засчитываться как отдельные цели).
+- `cv.maxWordGapPx/maxBaselineDeltaPx`: объединение соседних сегментов строки в один bbox (учёт пробелов в имени моба). Для длинных имён можно повышать `maxWordGapPx`.
+- `cv.exclusionZones`: список прямоугольников в абсолютных координатах экрана, где цели исключаются (например, нижняя UI-полоса).
+- `cv.flatness`: параметры эвристики «ровности» базовой линии и разделения слипшихся боксов по вертикальной «долине» (минимуму плотности столбцов) в морфологически закрытом изображении.
 - `cv.thresholdType`: одно из `THRESH_BINARY`, `THRESH_BINARY_INV`, `THRESH_OTSU` и т. д.
 - `cv.morphShape`: `MORPH_RECT`, `MORPH_ELLIPSE`, `MORPH_CROSS`.
 - `cv.roi`: регион интереса. Если `width/height == 0`, используется весь кадр. Планируется поддержка изменения ROI «на лету».
 
-Примечание: ROI используется как отдельный этап анализа. Пайплайн считает:
+Примечание: ROI используется как отдельный этап анализа. Пайплайн считает и логирует:
 - `fullFrame` — число контуров на всём кадре;
 - `afterROI` — число контуров внутри ROI;
 - `afterAreaFilter` — число контуров после фильтрации по площади (`minArea/maxArea`);
 - `afterSizeFilter` — число целей после фильтрации по размерам bbox (min/max width/height);
-- `afterMerge` — число целей после объединения сегментов строки (несколько слов/пробелов → 1 bbox).
+- `afterExclusion` — число целей после исключения зон (`exclusionZones`);
+- `afterFlatness` — число целей после эвристики «ровности»/разделения;
+- `afterMerge` — число целей после объединения сегментов одной строки (несколько слов/пробелов → 1 bbox).
 Координаты целей в `bboxes.json` приводятся к абсолютным экранным координатам (смещение ROI уже учтено). Targets сохраняются уже ПОСЛЕ объединения.
 
 ---
@@ -134,7 +145,10 @@ bboxes.json saved to C:\dev\l2js\logs\images\<timestamp>\bboxes.json
 - Освобождение всех Mat/временных объектов.
 
 Файл: `src/core/SmokeTest.ts` — демонстрация основной цепочки.
-Файл: `src/core/Scan.ts` — основная логика сканирования для FSM (подсчёт fullFrame/afterROI/afterAreaFilter/afterSizeFilter/afterMerge, сохранение bboxes.json с абсолютными координатами целей). Включает постобработку объединения сегментов одной строки по параметрам `maxWordGapPx` и `maxBaselineDeltaPx`.
+Файл: `src/core/Scan.ts` — основная логика сканирования для FSM (подсчёт fullFrame/afterROI/afterAreaFilter/afterSizeFilter/afterExclusion/afterFlatness/afterMerge, сохранение bboxes.json с абсолютными координатами целей). Постобработка включает:
+- объединение сегментов одной строки (`maxWordGapPx`, `maxBaselineDeltaPx`),
+- эвристику «ровности» верхней/нижней кромок и разрезание слипшихся боксов по «долине» плотности в `closedRoi` (управляется блоком `flatness`),
+- отрисовку overlay-изображений с зелёными bbox и подписями `#index (x,y,w,h)` для быстрой валидации.
 
 ---
 
