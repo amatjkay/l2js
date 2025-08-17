@@ -3,6 +3,7 @@ import { createLogger } from '../../core/Logger';
 import { IdleState } from './IdleState';
 import { loadSettings } from '../../core/Config';
 import { Actions } from '../../core/Actions';
+import { ensureGameActive } from '../../core/FocusGuard';
 import { spawn } from 'child_process';
 
 const Logger = createLogger();
@@ -15,19 +16,22 @@ export class TargetState implements IState {
     const count = ctx.targets?.length ?? 0;
     Logger.info(`TargetState: получено целей=${count}`);
     if (count > 0) {
-      // Выбор точки отсчёта из настроек: центр экрана или позиция курсора
+      // Настройки и выбор опорной точки
       const settings = loadSettings();
-      const refMode = settings.cv?.selection?.referencePoint || 'screenCenter';
-      const ref = refMode === 'cursorPosition' ? await getCursorPos() : await getPrimaryScreenCenter();
-      const t = selectClosestToCenter(ctx.targets!, ref.x, ref.y);
+      const refPref = settings.cv?.selection?.referencePoint || 'screenCenter';
+      // Для выбора цели используем либо центр экрана, либо текущую позицию курсора (влияет на метрику близости)
+      const refForSelect = refPref === 'cursorPosition' ? await getCursorPos() : await getPrimaryScreenCenter();
+      const t = selectClosestToCenter(ctx.targets!, refForSelect.x, refForSelect.y);
 
-      const dx = Math.round(t.cx - ref.x);
       // Смещение курсора вниз перед кликом для повышения точности попадания
       const clickOffsetY = Math.round(settings.actions?.clickOffsetY ?? 35);
-      const dy = Math.round((t.cy + clickOffsetY) - ref.y);
-      const distPx = Math.round(Math.sqrt(dx * dx + dy * dy));
-      const id = ctx.targets!.indexOf(t);
-      Logger.info(`chosenTarget: id=${id}, bbox=(${t.bbox.x},${t.bbox.y},${t.bbox.width},${t.bbox.height}), distPx=${distPx}, dx=${dx}, dy=${dy}`);
+
+      // Перед любым действием убеждаемся, что активное окно — игровое
+      const activeOk = await ensureGameActive();
+      if (!activeOk) {
+        Logger.warn('TargetState: окно игры не активно — наведение пропущено');
+        return;
+      }
 
       // Наведение и клик по центру цели (если actions.enableActions=true)
       const actions = new Actions(settings.actions || {});
@@ -38,6 +42,14 @@ export class TargetState implements IState {
       const afterClickMs = Math.max(0, Math.floor(delays.afterClickMs ?? 70));
       try {
         if ((settings.actions?.mode || 'powershell') === 'arduino') {
+          // Arduino BIGMOVE — относительное перемещение от ТЕКУЩЕЙ позиции курсора.
+          // Поэтому вычисляем дельты от текущего курсора, а не от центра экрана.
+          const cur = await getCursorPos();
+          const dx = Math.round(t.cx - cur.x);
+          const dy = Math.round((t.cy + clickOffsetY) - cur.y);
+          const distPx = Math.round(Math.sqrt(dx * dx + dy * dy));
+          const id = ctx.targets!.indexOf(t);
+          Logger.info(`chosenTarget(arduino): id=${id}, bbox=(${t.bbox.x},${t.bbox.y},${t.bbox.width},${t.bbox.height}), fromCursor dx=${dx}, dy=${dy}, distPx=${distPx}`);
           if (beforeMoveMs) await sleep(beforeMoveMs);
           await actions.bigMove(dx, dy);
           if (afterMoveMs) await sleep(afterMoveMs);
@@ -46,8 +58,11 @@ export class TargetState implements IState {
           if (afterClickMs) await sleep(afterClickMs);
         } else {
           if (beforeMoveMs) await sleep(beforeMoveMs);
-          // Для PowerShell/robotjs режима — двигаем сразу на абсолютные координаты с учётом смещения
-          await actions.moveMouseSmooth(t.cx, t.cy + clickOffsetY);
+          // Для PowerShell/robotjs — абсолютные координаты экрана
+          const ax = Math.max(0, Math.round(t.cx));
+          const ay = Math.max(0, Math.round(t.cy + clickOffsetY));
+          Logger.info(`chosenTarget(powershell): abs=(${ax},${ay}) bbox=(${t.bbox.x},${t.bbox.y},${t.bbox.width},${t.bbox.height})`);
+          await actions.moveMouseSmooth(ax, ay);
           if (afterMoveMs) await sleep(afterMoveMs);
           if (beforeClickMs) await sleep(beforeClickMs);
           await actions.mouseClick();
@@ -92,6 +107,13 @@ async function getPrimaryScreenCenter(): Promise<{ x: number; y: number }> {
   const line = await runPwshCapture(ps);
   const [x,y] = (line||'').trim().split(',').map(n=>parseInt(n,10));
   return { x: x||0, y: y||0 };
+}
+
+async function getPrimaryScreenBounds(): Promise<{ x: number; y: number; width: number; height: number }> {
+  const ps = `Add-Type -AssemblyName System.Windows.Forms;[void][System.Windows.Forms.Application]::EnableVisualStyles();$b=[System.Windows.Forms.Screen]::PrimaryScreen.Bounds;Write-Output "$($b.X),$($b.Y),$($b.Width),$($b.Height)"`;
+  const line = await runPwshCapture(ps);
+  const [x,y,w,h] = (line||'').trim().split(',').map(n=>parseInt(n,10));
+  return { x: x||0, y: y||0, width: w||0, height: h||0 };
 }
 
 function runPwshCapture(cmd: string): Promise<string> {

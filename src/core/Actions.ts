@@ -18,6 +18,41 @@ export interface ActionsConfig {
   };
 }
 
+// Helpers for cursor and screen bounds via PowerShell
+async function getCursorPos(): Promise<{ x: number; y: number }> {
+  const ps = `Add-Type @"\nusing System;using System.Runtime.InteropServices;public class U{[DllImport("user32.dll")]public static extern bool GetCursorPos(out POINT p);public struct POINT{public int X;public int Y;}}\n"@;$p=New-Object U+POINT;[U]::GetCursorPos([ref]$p)|Out-Null;Write-Output "${'$'}($p.X),${'$'}($p.Y)"`;
+  return new Promise((resolve, reject) => {
+    const psProc = spawn('powershell.exe', ['-NoProfile','-ExecutionPolicy','Bypass','-Command', ps], { windowsHide: true });
+    let out=''; let err='';
+    psProc.stdout.on('data', d=> out += d.toString());
+    psProc.stderr.on('data', d=> err += d.toString());
+    psProc.on('error', reject);
+    psProc.on('close', code => {
+      if (code===0) {
+        const [x,y] = out.trim().split(',').map(n=>parseInt(n,10));
+        resolve({ x: x||0, y: y||0 });
+      } else reject(new Error(err||`pwsh exited ${code}`));
+    });
+  });
+}
+
+async function getPrimaryScreenBounds(): Promise<{ x: number; y: number; width: number; height: number }> {
+  const ps = `Add-Type -AssemblyName System.Windows.Forms;[void][System.Windows.Forms.Application]::EnableVisualStyles();${'$'}b=[System.Windows.Forms.Screen]::PrimaryScreen.Bounds;Write-Output "${'$'}($b.X),${'$'}($b.Y),${'$'}($b.Width),${'$'}($b.Height)"`;
+  return new Promise((resolve, reject) => {
+    const psProc = spawn('powershell.exe', ['-NoProfile','-ExecutionPolicy','Bypass','-Command', ps], { windowsHide: true });
+    let out=''; let err='';
+    psProc.stdout.on('data', d=> out += d.toString());
+    psProc.stderr.on('data', d=> err += d.toString());
+    psProc.on('error', reject);
+    psProc.on('close', code => {
+      if (code===0) {
+        const [x,y,w,h] = out.trim().split(',').map(n=>parseInt(n,10));
+        resolve({ x: x||0, y: y||0, width: w||0, height: h||0 });
+      } else reject(new Error(err||`pwsh exited ${code}`));
+    });
+  });
+}
+
 function runPwsh(cmd: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const ps = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', cmd], {
@@ -123,7 +158,14 @@ export class Actions {
 
   async moveMouseSmooth(x: number, y: number): Promise<void> {
     if (!this.cfg.enableActions) { Logger.info(`[dry-run] moveMouseSmooth -> (${x},${y})`); return; }
-    await runPwsh(psSetCursorPos(x, y));
+    // Clamp to primary screen bounds to prevent cursor from flying off
+    const b = await getPrimaryScreenBounds();
+    const clampedX = Math.max(b.x, Math.min(b.x + b.width - 1, Math.round(x)));
+    const clampedY = Math.max(b.y, Math.min(b.y + b.height - 1, Math.round(y)));
+    // Safety: ensure game window is active
+    const ok = await ensureGameActive();
+    if (!ok) { Logger.warn('moveMouseSmooth: game window not active, skipping'); return; }
+    await runPwsh(psSetCursorPos(clampedX, clampedY));
     if (this.cfg.moveDelayMs) await new Promise(r => setTimeout(r, this.cfg.moveDelayMs));
   }
 
@@ -175,7 +217,15 @@ export class Actions {
   /** Arduino: large relative mouse move */
   async bigMove(dx: number, dy: number): Promise<void> {
     if (!this.cfg.enableActions) { Logger.info(`[dry-run] BIGMOVE ${dx} ${dy}`); return; }
-    if (this.cfg.mode !== 'arduino') { await this.moveMouseSmooth(dx, dy); return; }
+    if (this.cfg.mode !== 'arduino') {
+      // Fallback: emulate relative move using absolute SetCursorPos from current cursor
+      const cur = await getCursorPos();
+      const tx = cur.x + Math.round(dx);
+      const ty = cur.y + Math.round(dy);
+      Logger.info(`bigMove(fallback): cur=(${cur.x},${cur.y}) -> abs=(${tx},${ty})`);
+      await this.moveMouseSmooth(tx, ty);
+      return;
+    }
     const serial = this.cfg.serial; if (!serial?.port) { Logger.error('bigMove: no serial.port'); return; }
     const opts = { port: serial.port, baudRate: serial.baudRate ?? 115200, writeTimeoutMs: serial.writeTimeoutMs ?? 300, readTimeoutMs: serial.readTimeoutMs ?? 800, retries: serial.retries ?? 1 } as Required<NonNullable<ActionsConfig['serial']>>;
     let lastErr: unknown = null;
