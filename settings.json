@@ -6,6 +6,13 @@
     "format": "png",
     "debug": true
   },
+  "actions": {
+    "enableActions": true,
+    "mode": "arduino",
+    "serial": { "port": "COM5", "readTimeoutMs": 1500, "retries": 3 },
+    "camera": { "dxMin": -90, "dxMax": 90, "pauseMs": 1200 },
+    "delays": { "beforeMoveMs": 50, "afterMoveMs": 100, "beforeClickMs": 30, "afterClickMs": 80 }
+  },
   "cv": {
     "thresholdValue": 190,
     "thresholdType": "THRESH_BINARY",

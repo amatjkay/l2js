@@ -4,6 +4,36 @@
 
 ---
 
+## Arduino E2E Testing
+
+Финальная конфигурация (фрагмент settings.json):
+```
+"actions": {
+  "enableActions": true,
+  "mode": "arduino",
+  "serial": { "port": "COM5", "readTimeoutMs": 1500, "retries": 3 },
+  "camera": { "dxMin": -90, "dxMax": 90, "pauseMs": 1200 },
+  "delays": { "beforeMoveMs": 50, "afterMoveMs": 100, "beforeClickMs": 30, "afterClickMs": 80 }
+},
+"capture": { "debug": true }
+```
+
+Чек‑лист запуска:
+- Проверить, что Arduino на COM5 (или скорректировать settings.json → actions.serial.port).
+- Активировать окно игры (title начинается с "LU4", processFileExact="lu4.bin").
+- Запуск: `npm run dev`.
+- Наблюдать логи:
+  - `serial: cold-open 2.5s` (первый доступ к Serial);
+  - `scanForTargets: fullFrame=..., afterROI=..., ..., afterMerge=...`;
+  - при наличии целей: `chosenTarget: id=..., bbox=(x,y,w,h), distPx=..., dx=..., dy=...`, затем `==> BIGMOVE dx dy`, `==> LCLICK`;
+  - при отсутствии целей: `==> CAMERA dx 0` и повтор сканирования;
+  - при неактивном окне: `Skip serial "COMMAND" because game window is not active`.
+
+Параметры и их влияние:
+- `actions.camera.dxMin/dxMax`: амплитуда случайного поворота камеры в отсутствии целей; `pauseMs` — пауза на стабилизацию сцены перед повторным сканом.
+- `actions.delays.*`: микропаузы до/после перемещения и клика для устойчивости исполнения через Arduino.
+
+
 ## Содержание
 - Введение и архитектура
 - Требования
