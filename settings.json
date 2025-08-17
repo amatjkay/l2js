@@ -7,18 +7,25 @@
     "debug": true
   },
   "cv": {
-    "thresholdValue": 200,
+    "thresholdValue": 190,
     "thresholdType": "THRESH_BINARY",
-    "morphKernelSize": [50, 5],
+    "morphKernelSize": [48, 4],
     "morphShape": "MORPH_RECT",
     "roi": { "x": 0, "y": 120, "width": 1920, "height": 740 },
-    "minArea": 100,
+    "minArea": 70,
     "maxArea": 10000,
-    "minWidth": 50,
-    "minHeight": 8,
+    "minWidth": 20,
+    "minHeight": 12,
     "maxWidth": 350,
-    "maxHeight": 20,
-    "maxWordGapPx": 30,
-    "maxBaselineDeltaPx": 6
+    "maxHeight": 50,
+    "maxWordGapPx": 50,
+    "maxBaselineDeltaPx": 6,
+    "exclusionZones": [ { "x": 0, "y": 560, "width": 1920, "height": 180 } ],
+    "flatness": {
+      "stdThreshold": 1.2,
+      "minFlatRatio": 0.6,
+      "minValleyRatio": 0.45,
+      "minSplitWidth": 20
+    }
   }
 }
