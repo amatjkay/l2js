@@ -22,8 +22,13 @@ export class TargetState implements IState {
       const screenCenter = await getPrimaryScreenCenter();
       const t = selectClosestToCenter(ctx.targets!, screenCenter.x, screenCenter.y);
 
-      // Смещение курсора вниз перед кликом для повышения точности попадания
-      const clickOffsetY = Math.round(settings.actions?.clickOffsetY ?? 35);
+      // Смещение курсора вниз перед кликом — берём только из settings.json; если нет, используем 0 и предупреждаем
+      let clickOffsetY = 0;
+      if (typeof settings.actions?.clickOffsetY === 'number' && isFinite(settings.actions.clickOffsetY)) {
+        clickOffsetY = Math.round(settings.actions.clickOffsetY);
+      } else {
+        Logger.warn('actions.clickOffsetY is not set in settings.json; using 0');
+      }
 
       // Перед любым действием убеждаемся, что активное окно — игровое
       const activeOk = await ensureGameActive();

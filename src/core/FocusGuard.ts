@@ -3,6 +3,7 @@ import { loadSettings } from './Config';
 import { createLogger } from './Logger';
 
 const log = createLogger();
+let lastKnownHwnd: string | number | null = null;
 
 // Универсальные критерии поиска окна (ИЛИ)
 const DEFAULT_CRITERIA = {
@@ -61,6 +62,7 @@ export async function ensureGameActive(): Promise<boolean> {
       // 2) Поиск и SetForegroundWindow через PowerShell-бэкенд
       const found = await psFind(criteria);
       if (found?.found && found.hwnd) {
+        lastKnownHwnd = found.hwnd;
         const ok = await psActivate(found.hwnd);
         log.debug(`Auto-activate try: hwnd=${found.hwnd} result=${ok}`);
         if (ok) return true;
@@ -76,6 +78,24 @@ export async function ensureGameActive(): Promise<boolean> {
 export async function guard<T>(actionName: string, fn: () => Promise<T>): Promise<T | null> {
   const ok = await ensureGameActive();
   if (!ok) {
+    // Быстрый JIT-рекавери: попробуем ре-активировать последнее найденное окно
+    if (lastKnownHwnd) {
+      const activated = await psActivate(lastKnownHwnd);
+      log.debug(`JIT re-activate before action "${actionName}": hwnd=${lastKnownHwnd} -> ${activated}`);
+      if (activated) {
+        // небольшой ре-чек активного окна
+        await new Promise((r) => setTimeout(r, 100));
+        const again = await ensureGameActive();
+        if (again) {
+          try {
+            return await fn();
+          } catch (e) {
+            log.error(`Action "${actionName}" failed after JIT activation: ${(e as Error).message}`);
+            throw e;
+          }
+        }
+      }
+    }
     log.warn(`Skip action "${actionName}" because game window is not active`);
     return null;
   }

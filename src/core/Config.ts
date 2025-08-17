@@ -87,7 +87,6 @@ const DEFAULT_SETTINGS: AppSettings = {
     moveDelayMs: 10,
     clickDelayMs: 50,
     mode: 'powershell',
-    clickOffsetY: 35,
     focusCheck: {
       retryAttempts: 10,
       intervalMs: 500,
@@ -134,6 +133,7 @@ export function loadSettings(): AppSettings {
     const merged: AppSettings = {
       ...DEFAULT_SETTINGS,
       ...parsed,
+      actions: { ...DEFAULT_SETTINGS.actions, ...(parsed.actions || {}) },
       capture: { ...DEFAULT_SETTINGS.capture, ...(parsed.capture || {}) },
       cv: { ...DEFAULT_SETTINGS.cv, ...(parsed.cv || {}) },
     } as AppSettings;

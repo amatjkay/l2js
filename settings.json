@@ -20,6 +20,7 @@
     },
     "serial": { "port": "COM5", "readTimeoutMs": 1500, "retries": 3 },
     "camera": { "dxMin": 80, "dxMax": 160, "pauseMs": 1000 },
+    "clickOffsetY": 35,
     "delays": { "beforeMoveMs": 50, "afterMoveMs": 100, "beforeClickMs": 30, "afterClickMs": 80 }
   },
   "cv": {
