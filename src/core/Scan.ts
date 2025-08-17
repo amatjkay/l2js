@@ -64,13 +64,32 @@ export async function scanForTargets(): Promise<Target[]> {
   const hierarchyRoi = new cv.Mat();
   cv.findContours(closedRoi, contoursRoi, hierarchyRoi, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
   const afterRoiCount = contoursRoi.size();
+  // Fallback: если после морфологии контуры не найдены, попробуем взять контуры напрямую с threshold-изображения
+  let usedContours = contoursRoi;
+  let usedHierarchy = hierarchyRoi;
+  let afterFallbackCount = 0;
+  if (afterRoiCount === 0) {
+    const contoursThr = new cv.MatVector();
+    const hierarchyThr = new cv.Mat();
+    cv.findContours(thrRoi, contoursThr, hierarchyThr, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+    afterFallbackCount = contoursThr.size();
+    if (afterFallbackCount > 0) {
+      usedContours = contoursThr;
+      usedHierarchy = hierarchyThr;
+      // Освобождать исходные структуры будем позже, вместе с остальными ресурсами
+    } else {
+      // Нет контуров и на threshold — освобождаем временные
+      hierarchyThr.delete();
+      contoursThr.delete();
+    }
+  }
 
   // 4) Сбор результатов по ROI-контуров и фильтрация по площади
   const results: Target[] = [];
   const offX = roi && roi.width && roi.height ? Math.max(0, roi.x) : 0;
   const offY = roi && roi.width && roi.height ? Math.max(0, roi.y) : 0;
-  for (let i = 0; i < contoursRoi.size(); i++) {
-    const cnt = contoursRoi.get(i);
+  for (let i = 0; i < usedContours.size(); i++) {
+    const cnt = usedContours.get(i);
     const rect = cv.boundingRect(cnt);
     const area = cv.contourArea(cnt);
     const m = cv.moments(cnt);
@@ -196,7 +215,7 @@ export async function scanForTargets(): Promise<Target[]> {
   const metrics = computeAreaStats(merged.map((t) => t.area));
   const totalMs = Date.now() - tStart;
   Logger.info(
-    `scanForTargets: fullFrame=${fullCount}, afterROI=${afterRoiCount}, afterAreaFilter=${afterAreaCount}, afterSizeFilter=${sizeFiltered.length}, afterMerge=${merged.length}, area[min/avg/max]=${metrics.min}/${metrics.avg.toFixed(1)}/${metrics.max}, time=${totalMs}ms`
+    `scanForTargets: fullFrame=${fullCount}, afterROI=${afterRoiCount}, afterFallback=${afterFallbackCount}, afterAreaFilter=${afterAreaCount}, afterSizeFilter=${sizeFiltered.length}, afterMerge=${merged.length}, area[min/avg/max]=${metrics.min}/${metrics.avg.toFixed(1)}/${metrics.max}, time=${totalMs}ms`
   );
 
   // Сохранение overlay-скринов с зелёными bbox и bboxes.json
@@ -226,7 +245,17 @@ export async function scanForTargets(): Promise<Target[]> {
       roi: cvCfg.roi || null,
       minArea,
       maxArea,
-      counts: { fullFrame: fullCount, afterROI: afterRoiCount, afterAreaFilter: afterAreaCount, afterSizeFilter: sizeFiltered.length, afterYBand: bandFiltered.length, afterExclusion: excFiltered.length, afterFlatness: candidatesAfterFlat.length, afterMerge: merged.length },
+      counts: {
+        fullFrame: fullCount,
+        afterROI: afterRoiCount,
+        afterFallback: afterFallbackCount,
+        afterAreaFilter: afterAreaCount,
+        afterSizeFilter: sizeFiltered.length,
+        afterYBand: bandFiltered.length,
+        afterExclusion: excFiltered.length,
+        afterFlatness: candidatesAfterFlat.length,
+        afterMerge: merged.length,
+      },
       metrics,
       targets: merged,
       debug: {
@@ -248,6 +277,12 @@ export async function scanForTargets(): Promise<Target[]> {
   }
 
   // Cleanup
+  // Если использовали альтернативные контуры (threshold), необходимо корректно освободить ресурсы
+  if (usedContours !== contoursRoi) {
+    // Используемые структуры освободим здесь
+    usedHierarchy.delete();
+    usedContours.delete();
+  }
   hierarchyRoi.delete();
   contoursRoi.delete();
   closedRoi.delete();
