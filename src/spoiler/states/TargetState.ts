@@ -22,7 +22,9 @@ export class TargetState implements IState {
       const t = selectClosestToCenter(ctx.targets!, ref.x, ref.y);
 
       const dx = Math.round(t.cx - ref.x);
-      const dy = Math.round(t.cy - ref.y);
+      // Смещение курсора вниз перед кликом для повышения точности попадания
+      const clickOffsetY = Math.round(settings.actions?.clickOffsetY ?? 35);
+      const dy = Math.round((t.cy + clickOffsetY) - ref.y);
       const distPx = Math.round(Math.sqrt(dx * dx + dy * dy));
       const id = ctx.targets!.indexOf(t);
       Logger.info(`chosenTarget: id=${id}, bbox=(${t.bbox.x},${t.bbox.y},${t.bbox.width},${t.bbox.height}), distPx=${distPx}, dx=${dx}, dy=${dy}`);
@@ -44,7 +46,8 @@ export class TargetState implements IState {
           if (afterClickMs) await sleep(afterClickMs);
         } else {
           if (beforeMoveMs) await sleep(beforeMoveMs);
-          await actions.moveMouseSmooth(t.cx, t.cy);
+          // Для PowerShell/robotjs режима — двигаем сразу на абсолютные координаты с учётом смещения
+          await actions.moveMouseSmooth(t.cx, t.cy + clickOffsetY);
           if (afterMoveMs) await sleep(afterMoveMs);
           if (beforeClickMs) await sleep(beforeClickMs);
           await actions.mouseClick();

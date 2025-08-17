@@ -70,7 +70,7 @@ async function main() {
   };
   const initial = new BootState();
   const fsm = new StateMachine(initial, ctx);
-  await fsm.start(3);
+  await fsm.start(200);
 
   logger.info('Done.');
 }

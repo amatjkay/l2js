@@ -13,7 +13,8 @@
   "mode": "arduino",
   "serial": { "port": "COM5", "readTimeoutMs": 1500, "retries": 3 },
   "camera": { "dxMin": -90, "dxMax": 90, "pauseMs": 1200 },
-  "delays": { "beforeMoveMs": 50, "afterMoveMs": 100, "beforeClickMs": 30, "afterClickMs": 80 }
+  "delays": { "beforeMoveMs": 50, "afterMoveMs": 100, "beforeClickMs": 30, "afterClickMs": 80 },
+  "clickOffsetY": 35
 },
 "capture": { "debug": true }
 ```
@@ -32,6 +33,7 @@
 Параметры и их влияние:
 - `actions.camera.dxMin/dxMax`: амплитуда случайного поворота камеры в отсутствии целей; `pauseMs` — пауза на стабилизацию сцены перед повторным сканом.
 - `actions.delays.*`: микропаузы до/после перемещения и клика для устойчивости исполнения через Arduino.
+- `actions.clickOffsetY`: вертикальное смещение курсора перед кликом (в пикселях; по умолчанию 35). Положительное значение смещает вниз, помогает кликать чуть ниже центра bbox.
 
 
 ## Содержание
@@ -131,7 +133,8 @@ bboxes.json saved to C:\dev\l2js\logs\images\<timestamp>\bboxes.json
       "retries": 3
     },
     "camera": { "dxMin": 30, "dxMax": 30, "pauseMs": 200 },
-    "delays": { "beforeMoveMs": 20, "afterMoveMs": 100, "beforeClickMs": 20, "afterClickMs": 50 }
+    "delays": { "beforeMoveMs": 20, "afterMoveMs": 100, "beforeClickMs": 20, "afterClickMs": 50 },
+    "clickOffsetY": 35
   },
   "cv": {
     "thresholdValue": 190,

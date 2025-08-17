@@ -49,7 +49,7 @@ try { $sp.Open(); ${_serialInitialized ? '' : 'Start-Sleep -Milliseconds 2500;'}
   // Guard: send only when game window is active
   return ensureGameActive().then((ok) => {
     if (!ok) {
-      Logger.warn('Skip serial "%s" because game window is not active', line);
+      Logger.warn(`Skip serial "${line}" because game window is not active`);
       return;
     }
     if (!_serialInitialized) { Logger.info('serial: cold-open 2.5s'); }
@@ -80,7 +80,7 @@ try {
 `;
   return new Promise((resolve, reject) => {
     ensureGameActive().then((ok) => {
-      if (!ok) { Logger.warn('Skip serial query "%s" because game window is not active', line); return resolve(''); }
+      if (!ok) { Logger.warn(`Skip serial query "${line}" because game window is not active`); return resolve(''); }
       if (!_serialInitialized) { Logger.info('serial: cold-open 2.5s'); }
       _serialInitialized = true;
       const psProc = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', ps], { windowsHide: true });

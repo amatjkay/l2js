@@ -18,6 +18,30 @@ export interface AppSettings {
     moveDelayMs?: number;
     clickDelayMs?: number;
     mode?: 'powershell' | 'arduino';
+    /** Дополнительное смещение курсора по оси Y перед кликом (положительное значение смещает вниз). */
+    clickOffsetY?: number;
+    /** Параметры проверки/автоактивации фокуса окна игры */
+    focusCheck?: {
+      retryAttempts?: number;     // кол-во попыток проверки активного окна
+      intervalMs?: number;        // интервал между попытками
+      autoActivate?: boolean;     // пробовать автоактивацию при несовпадении
+      activateTitle?: string;     // точный заголовок для AppActivate (например, "LU4  ")
+      criteria?: {
+        titleContains?: string;
+        classEquals?: string;
+        processNameContains?: string;
+        hwndEquals?: number;
+      };
+    };
+    /** Параметры сопоставления окна игры для FocusGuard */
+    windowMatch?: {
+      titleEquals?: string;
+      titleRegex?: string;
+      processName?: string;
+      processFileExact?: string;
+      classNameEquals?: string;
+      classNameRegex?: string;
+    };
     serial?: {
       port?: string; // e.g. 'COM5'
       baudRate?: number; // 115200
@@ -63,6 +87,15 @@ const DEFAULT_SETTINGS: AppSettings = {
     moveDelayMs: 10,
     clickDelayMs: 50,
     mode: 'powershell',
+    clickOffsetY: 35,
+    focusCheck: {
+      retryAttempts: 10,
+      intervalMs: 500,
+      autoActivate: true,
+      activateTitle: '',
+      criteria: { titleContains: 'LU4', classEquals: 'UnrealWindow', processNameContains: 'lu4', hwndEquals: 0x00040686 },
+    },
+    windowMatch: {},
     serial: { port: '', baudRate: 115200, writeTimeoutMs: 300, readTimeoutMs: 800, retries: 1 },
     camera: { dxMin: 80, dxMax: 160, pauseMs: 150 },
     delays: { beforeMoveMs: 0, afterMoveMs: 70, beforeClickMs: 30, afterClickMs: 70 },

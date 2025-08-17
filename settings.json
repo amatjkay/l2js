@@ -9,14 +9,23 @@
   "actions": {
     "enableActions": true,
     "mode": "arduino",
+    "windowMatch": [
+      { "hwnd": "0x00040686" },
+      { "titleEquals": "LU4  " },
+      { "classNameEquals": "UnrealWindow" },
+      { "processName": "lu4" },
+      { "processFileExact": "lu4.bin" }
+    ],
+    "focusCheck": { "autoActivate": true, "activateTitle": "LU4  ", "retryAttempts": 10, "intervalMs": 250, "criteria": { "titleContains": "LU4", "classEquals": "UnrealWindow", "processNameContains": "lu4", "hwndEquals": 0 }
+    },
     "serial": { "port": "COM5", "readTimeoutMs": 1500, "retries": 3 },
-    "camera": { "dxMin": -90, "dxMax": 90, "pauseMs": 1200 },
+    "camera": { "dxMin": 80, "dxMax": 160, "pauseMs": 1000 },
     "delays": { "beforeMoveMs": 50, "afterMoveMs": 100, "beforeClickMs": 30, "afterClickMs": 80 }
   },
   "cv": {
-    "thresholdValue": 190,
+    "thresholdValue": 180,
     "thresholdType": "THRESH_BINARY",
-    "morphKernelSize": [48, 4],
+    "morphKernelSize": [36, 4],
     "morphShape": "MORPH_RECT",
     "roi": { "x": 0, "y": 120, "width": 1920, "height": 740 },
     "minArea": 70,
