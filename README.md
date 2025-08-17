@@ -88,6 +88,11 @@ bboxes.json saved to C:\dev\l2js\logs\images\<timestamp>\bboxes.json
     "format": "png",
     "debug": true
   },
+  "actions": {
+    "enableActions": false,
+    "moveDelayMs": 10,
+    "clickDelayMs": 50
+  },
   "cv": {
     "thresholdValue": 190,
     "thresholdType": "THRESH_BINARY",
@@ -118,6 +123,8 @@ bboxes.json saved to C:\dev\l2js\logs\images\<timestamp>\bboxes.json
 - `cv.maxWordGapPx/maxBaselineDeltaPx`: объединение соседних сегментов строки в один bbox (учёт пробелов в имени моба). Для длинных имён можно повышать `maxWordGapPx`.
 - `cv.exclusionZones`: список прямоугольников в абсолютных координатах экрана, где цели исключаются (например, нижняя UI-полоса).
 - `cv.flatness`: параметры эвристики «ровности» базовой линии и разделения слипшихся боксов по вертикальной «долине» (минимуму плотности столбцов) в морфологически закрытом изображении.
+ - `actions.enableActions`: если false — режим dry‑run (только логи, без движений/кликов). Если true — включаются действия (перемещение курсора и клик через PowerShell/user32.dll).
+ - `actions.moveDelayMs/clickDelayMs`: небольшие задержки после перемещения/клика.
 - `cv.thresholdType`: одно из `THRESH_BINARY`, `THRESH_BINARY_INV`, `THRESH_OTSU` и т. д.
 - `cv.morphShape`: `MORPH_RECT`, `MORPH_ELLIPSE`, `MORPH_CROSS`.
 - `cv.roi`: регион интереса. Если `width/height == 0`, используется весь кадр. Планируется поддержка изменения ROI «на лету».
@@ -158,7 +165,7 @@ bboxes.json saved to C:\dev\l2js\logs\images\<timestamp>\bboxes.json
   - `ScanState`: запуск CV пайплайна `scanForTargets()`, сохранение результатов в `ctx.targets`.
     - Формат результата: `Target[]` с полями `{ bbox:{x,y,width,height}, area, cx, cy }`.
     - Контекст FSM: `IStateContext` содержит `targets: Target[]`.
-  - `TargetState`: наведение/действия (в т. ч. нажатия клавиш/Windows API).
+  - `TargetState`: наведение/действия. При наличии целей перемещает курсор в центр top‑цели и выполняет клик. Если `actions.enableActions=false`, выполняется безопасный dry‑run (только логи).
   - `IdleState`: ожидание/повтор сканирования.
 - Метрики: время шагов пайплайна, число контуров, площади/центры — будут логироваться и, при debug=true, сопровождаться снимками.
 
