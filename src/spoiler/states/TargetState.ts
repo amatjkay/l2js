@@ -18,10 +18,9 @@ export class TargetState implements IState {
     if (count > 0) {
       // Настройки и выбор опорной точки
       const settings = loadSettings();
-      const refPref = settings.cv?.selection?.referencePoint || 'screenCenter';
-      // Для выбора цели используем либо центр экрана, либо текущую позицию курсора (влияет на метрику близости)
-      const refForSelect = refPref === 'cursorPosition' ? await getCursorPos() : await getPrimaryScreenCenter();
-      const t = selectClosestToCenter(ctx.targets!, refForSelect.x, refForSelect.y);
+      // Требование: выбирать ближайшую цель к центру ЭКРАНА
+      const screenCenter = await getPrimaryScreenCenter();
+      const t = selectClosestToCenter(ctx.targets!, screenCenter.x, screenCenter.y);
 
       // Смещение курсора вниз перед кликом для повышения точности попадания
       const clickOffsetY = Math.round(settings.actions?.clickOffsetY ?? 35);
@@ -41,12 +40,24 @@ export class TargetState implements IState {
       const beforeClickMs = Math.max(0, Math.floor(delays.beforeClickMs ?? 30));
       const afterClickMs = Math.max(0, Math.floor(delays.afterClickMs ?? 70));
       try {
+        // Рассчитываем целевые абсолютные координаты центра bbox с вертикальным сдвигом
+        const targetAx = Math.round(t.cx);
+        const targetAy = Math.round(t.cy + clickOffsetY);
+        // Зажимаем координаты в границы первичного экрана
+        const b = await getPrimaryScreenBounds();
+        const clamp = (v: number, min: number, max: number) => Math.min(Math.max(v, min), max);
+        const axClamped = clamp(targetAx, b.x, b.x + Math.max(0, b.width - 1));
+        const ayClamped = clamp(targetAy, b.y, b.y + Math.max(0, b.height - 1));
+        const wasClamped = (axClamped !== targetAx) || (ayClamped !== targetAy);
+        if (wasClamped) {
+          Logger.info(`clamp: (${targetAx},${targetAy}) -> (${axClamped},${ayClamped}) within [${b.x},${b.y},${b.width}x${b.height}]`);
+        }
         if ((settings.actions?.mode || 'powershell') === 'arduino') {
           // Arduino BIGMOVE — относительное перемещение от ТЕКУЩЕЙ позиции курсора.
           // Поэтому вычисляем дельты от текущего курсора, а не от центра экрана.
           const cur = await getCursorPos();
-          const dx = Math.round(t.cx - cur.x);
-          const dy = Math.round((t.cy + clickOffsetY) - cur.y);
+          const dx = Math.round(axClamped - cur.x);
+          const dy = Math.round(ayClamped - cur.y);
           const distPx = Math.round(Math.sqrt(dx * dx + dy * dy));
           const id = ctx.targets!.indexOf(t);
           Logger.info(`chosenTarget(arduino): id=${id}, bbox=(${t.bbox.x},${t.bbox.y},${t.bbox.width},${t.bbox.height}), fromCursor dx=${dx}, dy=${dy}, distPx=${distPx}`);
@@ -59,10 +70,8 @@ export class TargetState implements IState {
         } else {
           if (beforeMoveMs) await sleep(beforeMoveMs);
           // Для PowerShell/robotjs — абсолютные координаты экрана
-          const ax = Math.max(0, Math.round(t.cx));
-          const ay = Math.max(0, Math.round(t.cy + clickOffsetY));
-          Logger.info(`chosenTarget(powershell): abs=(${ax},${ay}) bbox=(${t.bbox.x},${t.bbox.y},${t.bbox.width},${t.bbox.height})`);
-          await actions.moveMouseSmooth(ax, ay);
+          Logger.info(`chosenTarget(powershell): abs=(${axClamped},${ayClamped}) bbox=(${t.bbox.x},${t.bbox.y},${t.bbox.width},${t.bbox.height})`);
+          await actions.moveMouseSmooth(axClamped, ayClamped);
           if (afterMoveMs) await sleep(afterMoveMs);
           if (beforeClickMs) await sleep(beforeClickMs);
           await actions.mouseClick();
