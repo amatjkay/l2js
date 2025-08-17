@@ -17,6 +17,13 @@ export interface AppSettings {
     enableActions?: boolean;
     moveDelayMs?: number;
     clickDelayMs?: number;
+    mode?: 'powershell' | 'arduino';
+    serial?: {
+      port?: string; // e.g. 'COM5'
+      baudRate?: number; // 115200
+      writeTimeoutMs?: number; // 300
+      retries?: number; // 1-2
+    };
   };
   cv?: {
     thresholdValue?: number;
@@ -51,6 +58,8 @@ const DEFAULT_SETTINGS: AppSettings = {
     enableActions: false,
     moveDelayMs: 10,
     clickDelayMs: 50,
+    mode: 'powershell',
+    serial: { port: '', baudRate: 115200, writeTimeoutMs: 300, retries: 1 },
   },
   cv: {
     thresholdValue: 200,
