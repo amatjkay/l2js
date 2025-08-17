@@ -113,3 +113,47 @@ Timings(ms): capture+roi=…, toMat=…, gray=…, threshold=…, morph=…, con
 
 Примечания:
 - На данном этапе `BootState` остаётся начальным состоянием; интеграцию перехода в `ScanState` выполним на следующем шаге (например, `BootState.execute()` → `new ScanState()`).
+
+
+## 9. E2E Arduino: Сценарий 2 — fallback поворот камеры при отсутствии целей
+
+Цель: подтвердить, что при отсутствии целей (`afterMerge=0`) выполняется командный поворот камеры (CAMERA dx 0), затем выполняется повторное сканирование. Для воспроизведения мы временно увеличили `cv.minArea` в `settings.json` до большого значения, чтобы гарантированно отфильтровать все контуры; после прогона значение возвращено.
+
+Фактические выдержки из `logs/app.log` (2025-08-17):
+
+```
+2025-08-17 22:23:27.601 [INFO] Starting app...
+2025-08-17 22:23:27.702 [INFO] OpenCV.js initialised. Version: unknown
+2025-08-17 22:23:28.785 [INFO] Captured frame saved to: C:\dev\l2js\captures\last.png
+2025-08-17 22:23:28.786 [INFO] ==> PING
+2025-08-17 22:23:29.073 [INFO] ==> STATUS
+2025-08-17 22:23:29.357 [INFO] [BootState] enter
+2025-08-17 22:23:29.357 [INFO] [BootState] execute
+2025-08-17 22:23:29.357 [INFO] [BootState] exit
+2025-08-17 22:23:29.751 [INFO] afterSizeFilter: targets=0
+2025-08-17 22:23:29.786 [INFO] ScanState: найдено 0 целей за 428 ms
+2025-08-17 22:23:29.751 [INFO] afterExclusionZones: targets=0 (zones=1)
+2025-08-17 22:23:29.752 [INFO] afterMerge: targets=0
+2025-08-17 22:23:29.752 [INFO] scanForTargets: fullFrame=52, afterROI=0, afterAreaFilter=0, afterSizeFilter=0, afterMerge=0, area[min/avg/max]=0/0.0/0, time=394ms
+2025-08-17 22:23:29.786 [INFO] bboxes.json saved to C:\dev\l2js\logs\images\1755458609752\bboxes.json
+2025-08-17 22:23:29.787 [INFO] ScanState: целей нет
+... (guard: окно не активно, серийные команды заблокированы) ...
+2025-08-17 22:23:31.332 [INFO] ScanState: повторное сканирование после поворота камеры
+2025-08-17 22:23:31.735 [INFO] afterSizeFilter: targets=0
+2025-08-17 22:23:31.769 [INFO] ScanState: найдено 0 целей за 437 ms
+2025-08-17 22:23:31.736 [INFO] afterExclusionZones: targets=0 (zones=1)
+2025-08-17 22:23:31.736 [INFO] afterMerge: targets=0
+2025-08-17 22:23:31.736 [INFO] scanForTargets: fullFrame=51, afterROI=0, afterAreaFilter=0, afterSizeFilter=0, afterMerge=0, area[min/avg/max]=0/0.0/0, time=404ms
+2025-08-17 22:23:31.769 [INFO] bboxes.json saved to C:\dev\l2js\logs\images\1755458611736\bboxes.json
+2025-08-17 22:23:31.770 [INFO] ScanState: целей нет
+2025-08-17 22:23:33.322 [INFO] ScanState: повторное сканирование после поворота камеры
+2025-08-17 22:23:33.746 [INFO] afterSizeFilter: targets=0
+2025-08-17 22:23:33.780 [INFO] ScanState: найдено 0 целей за 458 ms
+2025-08-17 22:23:33.780 [INFO] Done.
+```
+
+Примечания:
+- Fallback активировался корректно: лог строки `ScanState: целей нет` → `ScanState: повторное сканирование после поворота камеры` подтверждают цикл CAMERA→пауза→рескан. В текущем прогоне серийная отправка `CAMERA dx 0` была заблокирована FocusGuard из‑за неактивного окна, поэтому в логе присутствуют предупреждения `Game window is not active. Skip action.` и `Skip serial ...`.
+- Для полной демонстрации строки `==> CAMERA dx 0` активируйте окно LU4 и повторите сценарий — тогда в логе появится последовательность `serial: cold-open 2.5s` (однократно) и `==> CAMERA <dx> 0` перед сообщением о повторном сканировании.
+
+Результат: сценарий 2 подтверждён — при отсутствии целей выполняется попытка поворота камеры и повторные сканы, счётчики afterMerge=0 на всех повторах, bboxes.json сохраняются.

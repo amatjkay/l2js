@@ -8,6 +8,7 @@ import { BootState } from './spoiler/states/BootState';
 import type { IStateContext } from './spoiler/State';
 import { initCV } from './core/CV';
 import { smokeTestContours } from './core/SmokeTest';
+import { Actions } from './core/Actions';
 
 async function main() {
   pruneOldLogs(10);
@@ -47,6 +48,19 @@ async function main() {
     }
   } catch (e: any) {
     logger.error(`Capture failed: ${e?.message || e}`);
+  }
+
+  // Arduino diagnostics (ping/status) before FSM scan
+  try {
+    const actions = new Actions(settings.actions || {});
+    logger.info('==> PING');
+    const pong = await actions.ping();
+    if (pong) logger.info(pong);
+    logger.info('==> STATUS');
+    const st = await actions.status();
+    if (st) logger.info(st);
+  } catch (e: any) {
+    logger.error(`Diagnostics failed: ${e?.message || e}`);
   }
 
   // Demo: run simple state machine
