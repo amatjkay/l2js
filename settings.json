@@ -45,13 +45,15 @@
     },
     "camera": {
       "dxStep": 120,
-      "circleSteps": 36,
+      "circleSteps": 20,
       "stepPauseMs": 200,
       "sweepPauseMs": 500,
       "scrollUpAmount": 1,
       "scrollDownAmount": -1,
       "scale": 2,
-      "tiltDyMax": 3,
+      "tiltDyMax": 30,
+      "scrollPerStep": true,
+      "stepPauseMultiplier": 2,
       "scrollRandom": true,
       "scrollMin": 1,
       "scrollMax": 15

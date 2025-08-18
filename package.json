@@ -21,6 +21,7 @@
     "screenshot-desktop": "^1.15.1",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.2",
+    "tesseract.js": "^5.1.0",
     "winston": "^3.17.0"
   },
   "devDependencies": {

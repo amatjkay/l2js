@@ -6,8 +6,199 @@ import fs from 'fs';
 import path from 'path';
 import { PNG } from 'pngjs';
 import { createLogger } from './Logger';
+import https from 'https';
+// Загружаем runtime для генераторов, нужен tesseract.js
+try { require('regenerator-runtime/runtime'); } catch {}
+// Polyfill web worker-like globals for Node main thread (tesseract.js expects them in some paths)
+try {
+  const g: any = (globalThis as any);
+  if (typeof g.addEventListener !== 'function') g.addEventListener = () => {};
+  if (typeof g.removeEventListener !== 'function') g.removeEventListener = () => {};
+  if (typeof g.dispatchEvent !== 'function') g.dispatchEvent = () => true;
+  if (typeof g.self === 'undefined') g.self = g;
+} catch {}
+// Опциональная загрузка tesseract.js — чтобы сборка не падала, если пакет недоступен
+let createWorker: any;
+try {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  ({ createWorker } = require('tesseract.js'));
+} catch {
+  try {
+    // Попытка загрузить CommonJS-сборку напрямую
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    ({ createWorker } = require('tesseract.js/dist/tesseract.cjs.js'));
+  } catch {
+    // пакет недоступен в рантайме — OCR будет пропущен до дальнейших попыток в getOcrWorker
+  }
+}
 
 const Logger = createLogger();
+
+let ocrWorkerPromise: Promise<any> | null = null;
+async function getOcrWorker(lang: string, psm: number, whitelist: string): Promise<any> {
+  if (!ocrWorkerPromise) {
+    ocrWorkerPromise = (async () => {
+      // Если ранее require не сработал (ESM), пробуем динамический import
+      if (!createWorker) {
+        try {
+          const mod = await (Function('return import("tesseract.js")')() as Promise<any>);
+          createWorker = mod && (mod.createWorker || (mod.default && mod.default.createWorker));
+        } catch {
+          // ignore
+        }
+      }
+      if (!createWorker) throw new Error('tesseract.js not available');
+      // Явно укажем пути до worker и core, чтобы избежать проблем резолва
+      let workerPath: string | undefined;
+      let corePath: string | undefined;
+      try {
+        // Используем локальный shim, эмулирующий web-worker API поверх worker_threads
+        const distShim = path.resolve('dist/core/tess-worker-shim.js');
+        const srcShim = path.resolve('src/core/tess-worker-shim.js');
+        workerPath = fs.existsSync(distShim) ? distShim : srcShim;
+      } catch {}
+      // В tesseract.js corePath должен указывать на JS-лоадер (.wasm.js), рядом с которым лежит бинарный .wasm
+      const candidates = [
+        'tesseract.js-core/tesseract-core-simd-lstm.wasm.js',
+        'tesseract.js-core/tesseract-core-lstm.wasm.js',
+        'tesseract.js-core/tesseract-core.wasm.js',
+      ];
+      for (const c of candidates) {
+        if (corePath) break;
+        try { corePath = require.resolve(c); } catch {}
+      }
+      // Если вдруг получили путь на бинарный .wasm (редкий кейс) — вернёмся к .wasm.js рядом
+      if (corePath && /\.wasm$/i.test(corePath) && !/\.wasm\.js$/i.test(corePath)) {
+        const alt = corePath + '.js';
+        if (fs.existsSync(alt)) corePath = alt;
+      }
+
+      // Нормализуем язык: tesseract ожидает строку вида "eng" или "eng+rus"
+      const langNorm = (() => {
+        // поддержим массив строк на входе (на всякий случай)
+        const raw = Array.isArray((lang as unknown))
+          ? (lang as unknown as string[]).join('+')
+          : (typeof lang === 'string' ? lang : '');
+        const s = (raw || '').trim();
+        if (!s) {
+          Logger.warn('OCR: пустой/некорректный lang, подставляю "eng"');
+          return 'eng';
+        }
+        return s;
+      })();
+      Logger.info(`OCR: init worker with lang="${langNorm}" (type=${Array.isArray((lang as unknown)) ? 'array' : typeof lang}), psm=${psm}`);
+      if (typeof lang !== 'string' && !Array.isArray((lang as unknown))) {
+        Logger.warn('OCR: параметр lang имеет некорректный тип, ожидается string или string[]');
+      }
+
+      // Локальная папка с языковыми файлами
+      const tessdataDir = path.resolve('tessdata');
+      try { ensureDir(tessdataDir); } catch {}
+
+      // Убедимся, что для всех языков есть traineddata; при отсутствии — попробуем скачать
+      try {
+        const langs = String(langNorm).split('+').map(s => s.trim()).filter(Boolean);
+        for (const l of langs) {
+          await ensureTrainedData(tessdataDir, l);
+        }
+      } catch (e) {
+        Logger.warn(`OCR: ensureTrainedData failed: ${e}`);
+      }
+
+      const defaultWhitelist = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
+      const wl = (typeof whitelist === 'string' && whitelist.trim().length > 0) ? whitelist : defaultWhitelist;
+      if (wl === defaultWhitelist) {
+        Logger.info('OCR: whitelist не задан, использую A–Z a–z по умолчанию');
+      } else {
+        Logger.info(`OCR: whitelist задан (${whitelist.length} chars)`);
+      }
+
+      Logger.info(`OCR: worker options: workerPath=${workerPath ?? 'auto'}, corePath=${corePath ?? 'auto'}, workerBlobURL=false`);
+      const worker = await createWorker(
+        langNorm,
+        undefined,
+        {
+          ...(workerPath ? { workerPath } : {}),
+          ...(corePath ? { corePath } : {}),
+          // В Node запрещаем blob-URL, чтобы использовать файл-воркер/worker_threads
+          workerBlobURL: false,
+          // Направляем Tesseract на локальные traineddata
+          cachePath: tessdataDir,
+          dataPath: tessdataDir,
+          cacheMethod: 'write',
+          gzip: true,
+        },
+      );
+      await worker.setParameters({
+        tessedit_pageseg_mode: String(psm),
+        tessedit_char_whitelist: wl,
+      } as any);
+      return worker;
+    })();
+  }
+  return ocrWorkerPromise;
+}
+
+async function ensureTrainedData(dir: string, lang: string): Promise<void> {
+  const file = path.join(dir, `${lang}.traineddata`);
+  if (fs.existsSync(file) && fs.statSync(file).size > 0) return;
+  const url = `https://github.com/tesseract-ocr/tessdata_best/raw/main/${lang}.traineddata`;
+  await new Promise<void>((resolve, reject) => {
+    Logger.info(`OCR: downloading ${lang}.traineddata ...`);
+    const req = https.get(url, (res) => {
+      if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        // redirect
+        https.get(res.headers.location, (res2) => pipeToFile(res2, file, resolve, reject)).on('error', reject);
+      } else {
+        pipeToFile(res, file, resolve, reject);
+      }
+    });
+    req.on('error', reject);
+  });
+  Logger.info(`OCR: ${lang}.traineddata saved to ${file}`);
+
+  function pipeToFile(stream: NodeJS.ReadableStream, outPath: string, resolve: () => void, reject: (err: any) => void) {
+    if ((stream as any).statusCode && (stream as any).statusCode !== 200) {
+      reject(new Error(`HTTP ${(stream as any).statusCode}`));
+      return;
+    }
+    const tmp = outPath + '.part';
+    const ws = fs.createWriteStream(tmp);
+    stream.pipe(ws);
+    ws.on('finish', () => {
+      ws.close();
+      try {
+        fs.renameSync(tmp, outPath);
+        resolve();
+      } catch (e) {
+        reject(e);
+      }
+    });
+    ws.on('error', reject);
+  }
+}
+
+function saveGrayCropPng(filePath: string, matGray: any, x: number, y: number, w: number, h: number) {
+  const width = Math.max(1, Math.min(w, matGray.cols - x));
+  const height = Math.max(1, Math.min(h, matGray.rows - y));
+  const rgba = new Uint8ClampedArray(width * height * 4);
+  const src = matGray.data as Uint8Array; // 1 channel
+  for (let row = 0; row < height; row++) {
+    for (let col = 0; col < width; col++) {
+      const srcIdx = (row + y) * matGray.cols + (col + x);
+      const val = src[srcIdx];
+      const j = (row * width + col) * 4;
+      rgba[j] = val; // R
+      rgba[j + 1] = val; // G
+      rgba[j + 2] = val; // B
+      rgba[j + 3] = 255; // A
+    }
+  }
+  const png = new PNG({ width, height });
+  png.data = Buffer.from(rgba);
+  const out = fs.createWriteStream(filePath);
+  png.pack().pipe(out);
+}
 
 /**
  * Выполняет сканирование экрана с использованием параметров из settings.json
@@ -211,28 +402,110 @@ export async function scanForTargets(): Promise<Target[]> {
   const merged = mergeLineSegments(candidatesAfterFlat, gap, baselineDelta);
   Logger.info(`afterMerge: targets=${merged.length}`);
 
+  // 7) OCR-фильтрация распознанного текста (опционально)
+  let ocrFiltered: Target[] = merged;
+  const ocrCfg = (cvCfg as any).ocr || {};
+  const ocrEnabled: boolean = !!ocrCfg.enabled;
+  let afterOcrCount = merged.length;
+  const ocrDebug: any[] = [];
+  if (ocrEnabled && merged.length > 0) {
+    try {
+      const lang: string = ocrCfg.lang || 'eng';
+      const psm: number = typeof ocrCfg.psm === 'number' ? ocrCfg.psm : 7;
+      const minConfidence: number = typeof ocrCfg.minConfidence === 'number' ? ocrCfg.minConfidence : 70;
+      const whitelist: string = ocrCfg.whitelist || 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
+      const maxPerFrame: number = typeof ocrCfg.maxPerFrame === 'number' ? ocrCfg.maxPerFrame : 6;
+      const timeoutMs: number = typeof ocrCfg.timeoutMs === 'number' ? ocrCfg.timeoutMs : 1000;
+      const debugSave: boolean = !!ocrCfg.debugSaveCrops;
+      const source: 'binary' | 'gray' = (ocrCfg.source === 'gray') ? 'gray' : 'binary';
+      const pad: number = (typeof ocrCfg.padding === 'number' ? ocrCfg.padding : 2);
+      Logger.info(`OCR: source=${source} psm=${psm} minConf=${minConfidence} pad=${pad}`);
+
+      const worker = await getOcrWorker(lang, psm, whitelist);
+      const outDir = path.resolve('logs', 'images', `${tStart}`);
+      const cropsDir = path.join(outDir, 'ocr_crops');
+      if (useDebug || debugSave) {
+        ensureDir(outDir);
+        ensureDir(cropsDir);
+      }
+      const tasks: Array<Promise<{ idx: number; ok: boolean; text: string; conf: number }>> = [];
+      const toProcess = merged.slice(0, Math.max(1, maxPerFrame));
+      for (let i = 0; i < toProcess.length; i++) {
+        const t = toProcess[i];
+        const srcMat = source === 'binary' ? thrRoi : roiGray;
+        const xr = Math.max(0, Math.min(srcMat.cols - 1, Math.round(t.bbox.x - offX)));
+        const yr = Math.max(0, Math.min(srcMat.rows - 1, Math.round(t.bbox.y - offY)));
+        const wr = Math.max(1, Math.min(srcMat.cols - xr, Math.round(t.bbox.width + pad * 2)));
+        const hr = Math.max(1, Math.min(srcMat.rows - yr, Math.round(t.bbox.height + pad * 2)));
+        const xrp = Math.max(0, xr - pad);
+        const yrp = Math.max(0, yr - pad);
+        const cropName = `ocr_${i + 1}_${xrp}x${yrp}_${wr}x${hr}.png`;
+        const cropPath = path.join(cropsDir, cropName);
+        // Сохраняем PNG для OCR (и диагностики при debug)
+        saveGrayCropPng(cropPath, srcMat, xrp, yrp, wr, hr);
+        // Запускаем OCR с таймаутом
+        const p = (async () => {
+          let resText = '';
+          let conf = 0;
+          try {
+            const ret = await worker.recognize(cropPath);
+            resText = (ret?.data?.text || '').replace(/\r|\n/g, ' ').trim();
+            conf = Math.round(ret?.data?.confidence ?? 0);
+          } catch (e) {
+            // ignore, treat as fail
+          } finally {
+            if (!useDebug && !debugSave) {
+              try { fs.unlinkSync(cropPath); } catch {}
+            }
+          }
+          // Фильтры: только A-Za-z, min length 2, min confidence
+          const onlyLetters = resText.replace(/[^A-Za-z]+/g, '');
+          const ok = onlyLetters.length >= 2 && conf >= minConfidence;
+          return { idx: i, ok, text: onlyLetters, conf };
+        })();
+        tasks.push(p);
+      }
+      const results = await Promise.all(tasks);
+      // По умолчанию оставляем все боксы, которые не обрабатывались OCR (индексы >= toProcess.length)
+      const allow: boolean[] = merged.map((_, idx) => idx >= toProcess.length);
+      for (let i = 0; i < results.length; i++) {
+        const r = results[i];
+        ocrDebug.push({ index: i + 1, text: r.text, conf: r.conf });
+        allow[r.idx] = r.ok;
+      }
+      ocrFiltered = merged.filter((_, idx) => allow[idx]);
+      afterOcrCount = ocrFiltered.length;
+      Logger.info(`afterOCR: targets=${afterOcrCount} (processed=${results.length})`);
+    } catch (e) {
+      Logger.warn(`OCR step failed: ${e}`);
+    }
+  }
+
+  // Итоговые цели после возможного OCR-фильтра
+  const finalTargets = ocrEnabled ? ocrFiltered : merged;
+
   // Метрики и лог
-  const metrics = computeAreaStats(merged.map((t) => t.area));
+  const metrics = computeAreaStats(finalTargets.map((t) => t.area));
   const totalMs = Date.now() - tStart;
   Logger.info(
-    `scanForTargets: fullFrame=${fullCount}, afterROI=${afterRoiCount}, afterFallback=${afterFallbackCount}, afterAreaFilter=${afterAreaCount}, afterSizeFilter=${sizeFiltered.length}, afterMerge=${merged.length}, area[min/avg/max]=${metrics.min}/${metrics.avg.toFixed(1)}/${metrics.max}, time=${totalMs}ms`
+    `scanForTargets: fullFrame=${fullCount}, afterROI=${afterRoiCount}, afterFallback=${afterFallbackCount}, afterAreaFilter=${afterAreaCount}, afterSizeFilter=${sizeFiltered.length}, afterMerge=${merged.length}${ocrEnabled?`, afterOCR=${afterOcrCount}`:''}, final=${finalTargets.length}, area[min/avg/max]=${metrics.min}/${metrics.avg.toFixed(1)}/${metrics.max}, time=${totalMs}ms`
   );
 
   // Сохранение overlay-скринов с зелёными bbox и bboxes.json
   if (useDebug) {
-    const outDir = path.resolve('logs', 'images', `${Date.now()}`);
+    const outDir = path.resolve('logs', 'images', `${tStart}`);
     ensureDir(outDir);
     try {
       // 03_threshold_overlay.png
       const thrColor = new cv.Mat();
       cv.cvtColor(thrRoi, thrColor, cv.COLOR_GRAY2BGR);
-      drawBoxesOnBgrMat(thrColor, merged, offX, offY, new cv.Scalar(0, 255, 0, 255), 2, cv);
+      drawBoxesOnBgrMat(thrColor, finalTargets, offX, offY, new cv.Scalar(0, 255, 0, 255), 2, cv);
       saveBgrPng(path.join(outDir, '03_threshold_overlay.png'), thrColor);
 
       // 04_morph_close_overlay.png
       const clColor = new cv.Mat();
       cv.cvtColor(closedRoi, clColor, cv.COLOR_GRAY2BGR);
-      drawBoxesOnBgrMat(clColor, merged, offX, offY, new cv.Scalar(0, 255, 0, 255), 2, cv);
+      drawBoxesOnBgrMat(clColor, finalTargets, offX, offY, new cv.Scalar(0, 255, 0, 255), 2, cv);
       saveBgrPng(path.join(outDir, '04_morph_close_overlay.png'), clColor);
 
       thrColor.delete();
@@ -255,9 +528,10 @@ export async function scanForTargets(): Promise<Target[]> {
         afterExclusion: excFiltered.length,
         afterFlatness: candidatesAfterFlat.length,
         afterMerge: merged.length,
+        ...(ocrEnabled ? { afterOCR: afterOcrCount } : {}),
       },
       metrics,
-      targets: merged,
+      targets: finalTargets,
       debug: {
         sizeThresholds: { minWidth: minW, minHeight: minH, maxWidth: maxW, maxHeight: maxH },
         areaThresholds: { minArea, maxArea },
@@ -269,6 +543,7 @@ export async function scanForTargets(): Promise<Target[]> {
         filteredByExclusion,
         flatness: { stdThreshold: stdThresh, minFlatRatio, minValleyRatio, minSplitWidth },
         flatProfiles: flatDebug,
+        ocr: ocrEnabled ? { processed: Math.min(merged.length, (cvCfg as any).ocr?.maxPerFrame || 6), after: afterOcrCount, results: ocrDebug } : undefined,
       },
     };
     const outPath = path.join(outDir, 'bboxes.json');
@@ -292,7 +567,7 @@ export async function scanForTargets(): Promise<Target[]> {
   grayFull.delete();
   matFull.delete();
 
-  return merged;
+  return finalTargets;
 
   /**
    * Объединяет горизонтально выровненные сегменты одной строки в единый bbox,

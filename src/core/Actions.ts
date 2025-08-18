@@ -207,11 +207,13 @@ export class Actions {
     const serial = this.cfg.serial; if (!serial?.port) { Logger.error('cameraRotate: no serial.port'); return; }
     const opts = { port: serial.port, baudRate: serial.baudRate ?? 115200, writeTimeoutMs: serial.writeTimeoutMs ?? 300, readTimeoutMs: serial.readTimeoutMs ?? 800, retries: serial.retries ?? 1 } as Required<NonNullable<ActionsConfig['serial']>>;
     let lastErr: unknown = null;
+    Logger.info(`cameraRotate: request dx=${Math.round(dx)} dy=${Math.round(dy)} port=${opts.port}`);
     for (let i = 1; i <= (opts.retries || 1); i++) {
       try { await runPwshSerialWrite(opts, `CAMERA ${Math.round(dx)} ${Math.round(dy)}`); lastErr = null; break; }
       catch (e) { lastErr = e; Logger.warn(`serial write failed (attempt ${i}/${opts.retries}): ${(e as Error).message}`); await new Promise(r=>setTimeout(r,50)); }
     }
     if (lastErr) Logger.error(`cameraRotate: failed after ${opts.retries} attempts`);
+    else Logger.info('cameraRotate: sent successfully');
   }
 
   /** Arduino: large relative mouse move */

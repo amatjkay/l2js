@@ -10,12 +10,34 @@ import { initCV } from './core/CV';
 import { smokeTestContours } from './core/SmokeTest';
 import { Actions } from './core/Actions';
 
+// Keep FSM reference for graceful shutdown
+let _fsm: StateMachine | null = null;
+let _shuttingDown = false;
+
+function setupShutdown(logger: ReturnType<typeof createLogger>) {
+  const shutdown = (signal: string) => {
+    if (_shuttingDown) return;
+    _shuttingDown = true;
+    try { logger.info(`Shutdown requested (${signal}). Stopping FSM...`); } catch {}
+    try { _fsm?.stop(); } catch {}
+    // give a short grace period for the current step to complete
+    setTimeout(() => {
+      try { logger.info('Exit now.'); } catch {}
+      process.exit(0);
+    }, 500);
+  };
+  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('beforeExit', () => shutdown('beforeExit'));
+}
+
 async function main() {
   pruneOldLogs(10);
   const logger = createLogger();
   const settings = loadSettings();
 
   logger.info('Starting app...');
+  setupShutdown(logger);
 
   // Init OpenCV.js (WebAssembly)
   try {
@@ -50,15 +72,20 @@ async function main() {
     logger.error(`Capture failed: ${e?.message || e}`);
   }
 
-  // Arduino diagnostics (ping/status) before FSM scan
+  // Arduino diagnostics (ping/status) before FSM scan — только если реально включены действия и режим arduino
   try {
-    const actions = new Actions(settings.actions || {});
-    logger.info('==> PING');
-    const pong = await actions.ping();
-    if (pong) logger.info(pong);
-    logger.info('==> STATUS');
-    const st = await actions.status();
-    if (st) logger.info(st);
+    const actCfg = settings.actions || {} as any;
+    if (actCfg.enableActions && (actCfg.mode || 'powershell') === 'arduino') {
+      const actions = new Actions(actCfg);
+      logger.info('==> PING');
+      const pong = await actions.ping();
+      if (pong) logger.info(pong);
+      logger.info('==> STATUS');
+      const st = await actions.status();
+      if (st) logger.info(st);
+    } else {
+      logger.info('Diagnostics skipped (actions disabled or non-arduino mode).');
+    }
   } catch (e: any) {
     logger.error(`Diagnostics failed: ${e?.message || e}`);
   }
@@ -70,6 +97,7 @@ async function main() {
   };
   const initial = new BootState();
   const fsm = new StateMachine(initial, ctx);
+  _fsm = fsm;
   await fsm.start(200);
 
   logger.info('Done.');
