@@ -132,7 +132,12 @@ bboxes.json saved to C:\dev\l2js\logs\images\<timestamp>\bboxes.json
       "readTimeoutMs": 1500,
       "retries": 3
     },
-    "camera": { "dxMin": 30, "dxMax": 30, "pauseMs": 200 },
+    "camera": { "dxMin": 30, "dxMax": 30, "pauseMs": 200,
+      "dxStep": 120, "circleSteps": 36, "stepPauseMs": 200, "sweepPauseMs": 500,
+      "scrollUpAmount": 1, "scrollDownAmount": -1,
+      "tiltDyMax": 3,
+      "scrollRandom": true, "scrollMin": 1, "scrollMax": 15
+    },
     "delays": { "beforeMoveMs": 20, "afterMoveMs": 100, "beforeClickMs": 20, "afterClickMs": 50 },
     "clickOffsetY": 35
   },
@@ -168,6 +173,10 @@ bboxes.json saved to C:\dev\l2js\logs\images\<timestamp>\bboxes.json
 - `cv.exclusionZones`: список прямоугольников в абсолютных координатах экрана, где цели исключаются (например, нижняя UI-полоса).
 - `cv.flatness`: параметры эвристики «ровности» базовой линии и разделения слипшихся боксов по вертикальной «долине» (минимуму плотности столбцов) в морфологически закрытом изображении.
  - `actions.enableActions`: если false — режим dry‑run (только логи, без движений/кликов). Если true — включаются действия (перемещение курсора и клик через PowerShell/user32.dll или Arduino).
+ - `actions.camera.tiltDyMax`: максимальный по модулю случайный наклон камеры по оси Y. В `ScanState` при свипе dy выбирается СЛУЧАЙНО НА КАЖДОМ ШАГЕ из диапазона `[-tiltDyMax; +tiltDyMax]` и передаётся в `cameraRotate(stepDx, dy)`.
+ - `actions.camera.scrollRandom`: если true — между кругами выполняется случайная прокрутка колёсиком: случайное направление (вверх/вниз) и случайное количество тиков.
+ - `actions.camera.scrollMin/scrollMax`: нижняя/верхняя границы количества тиков прокрутки при `scrollRandom=true`.
+ - `actions.camera.dxStep/circleSteps/stepPauseMs/sweepPauseMs`: параметры свипа (шаг, число шагов на круг, пауза между шагами и пауза между кругами).
  - `actions.moveDelayMs/clickDelayMs`: базовые задержки после перемещения/клика.
  - `actions.serial.readTimeoutMs/retries`: диагностика Serial (таймаут чтения и число ретраев для `ping/status` и команд).
  - `actions.camera`: параметры случайного поворота камеры в `ScanState` при отсутствии целей.

@@ -10,26 +10,75 @@
     "enableActions": true,
     "mode": "arduino",
     "windowMatch": [
-      { "hwnd": "0x00040686" },
-      { "titleEquals": "LU4  " },
-      { "classNameEquals": "UnrealWindow" },
-      { "processName": "lu4" },
-      { "processFileExact": "lu4.bin" }
+      {
+        "hwnd": "0x00040686"
+      },
+      {
+        "titleEquals": "LU4  "
+      },
+      {
+        "classNameEquals": "UnrealWindow"
+      },
+      {
+        "processName": "lu4"
+      },
+      {
+        "processFileExact": "lu4.bin"
+      }
     ],
-    "focusCheck": { "autoActivate": true, "activateTitle": "LU4  ", "retryAttempts": 10, "intervalMs": 250, "criteria": { "titleContains": "LU4", "classEquals": "UnrealWindow", "processNameContains": "lu4", "hwndEquals": 0 }
+    "focusCheck": {
+      "autoActivate": true,
+      "activateTitle": "LU4  ",
+      "retryAttempts": 10,
+      "intervalMs": 250,
+      "criteria": {
+        "titleContains": "LU4",
+        "classEquals": "UnrealWindow",
+        "processNameContains": "lu4",
+        "hwndEquals": 0
+      }
     },
-    "serial": { "port": "COM5", "readTimeoutMs": 1500, "retries": 3 },
-    "camera": { "dxMin": 80, "dxMax": 160, "pauseMs": 1000 },
+    "serial": {
+      "port": "COM5",
+      "readTimeoutMs": 1500,
+      "retries": 3
+    },
+    "camera": {
+      "dxStep": 120,
+      "circleSteps": 36,
+      "stepPauseMs": 200,
+      "sweepPauseMs": 500,
+      "scrollUpAmount": 1,
+      "scrollDownAmount": -1,
+      "scale": 2,
+      "tiltDyMax": 3,
+      "scrollRandom": true,
+      "scrollMin": 1,
+      "scrollMax": 15
+    },
     "clickOffsetY": 35,
-    "delays": { "beforeMoveMs": 50, "afterMoveMs": 100, "beforeClickMs": 30, "afterClickMs": 80 }
+    "delays": {
+      "beforeMoveMs": 50,
+      "afterMoveMs": 100,
+      "beforeClickMs": 30,
+      "afterClickMs": 80
+    }
   },
   "cv": {
-    "thresholdValue": 180,
+    "thresholdValue": 160,
     "thresholdType": "THRESH_BINARY",
-    "morphKernelSize": [36, 4],
+    "morphKernelSize": [
+      24,
+      4
+    ],
     "morphShape": "MORPH_RECT",
-    "roi": { "x": 0, "y": 120, "width": 1920, "height": 740 },
-    "minArea": 70,
+    "roi": {
+      "x": 0,
+      "y": 120,
+      "width": 1920,
+      "height": 740
+    },
+    "minArea": 40,
     "maxArea": 10000,
     "minWidth": 20,
     "minHeight": 12,
@@ -37,12 +86,24 @@
     "maxHeight": 50,
     "maxWordGapPx": 50,
     "maxBaselineDeltaPx": 6,
-    "exclusionZones": [ { "x": 0, "y": 560, "width": 1920, "height": 180 } ],
+    "exclusionZones": [],
     "flatness": {
       "stdThreshold": 1.2,
       "minFlatRatio": 0.6,
       "minValleyRatio": 0.45,
       "minSplitWidth": 20
+    },
+    "ocr": {
+      "enabled": false,
+      "lang": "eng",
+      "psm": 8,
+      "minConfidence": 65,
+      "whitelist": "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+      "maxPerFrame": 6,
+      "timeoutMs": 2000,
+      "debugSaveCrops": true,
+      "source": "binary",
+      "padding": 4
     }
   }
 }

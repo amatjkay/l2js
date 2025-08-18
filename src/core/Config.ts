@@ -49,7 +49,29 @@ export interface AppSettings {
       readTimeoutMs?: number; // 800
       retries?: number; // 1-2
     };
-    camera?: { dxMin?: number; dxMax?: number; pauseMs?: number };
+    camera?: {
+      dxMin?: number; dxMax?: number; pauseMs?: number; scale?: number; repeats?: number;
+      /** Размер шага поворота камеры по горизонтали за один тик (в относительных единицах dx) */
+      dxStep?: number;
+      /** Количество шагов для полного круга (360°) */
+      circleSteps?: number;
+      /** Пауза между шагами поворота, чтобы OCR успевал */
+      stepPauseMs?: number;
+      /** Пауза после завершения круга перед следующим действием */
+      sweepPauseMs?: number;
+      /** Количество кликов прокрутки вверх между кругами (маусапп колесиком) */
+      scrollUpAmount?: number;
+      /** Количество кликов прокрутки вниз между кругами (маусдаун колесиком) */
+      scrollDownAmount?: number;
+      /** Включить рандомизацию прокрутки: случайное направление и количество */
+      scrollRandom?: boolean;
+      /** Минимальное количество тиков прокрутки при рандоме */
+      scrollMin?: number;
+      /** Максимальное количество тиков прокрутки при рандоме */
+      scrollMax?: number;
+      /** Максимальный по модулю случайный наклон по оси Y на один круг (dy), выбирается для каждого круга случайно в диапазоне [-tiltDyMax; +tiltDyMax] */
+      tiltDyMax?: number;
+    };
     delays?: { beforeMoveMs?: number; afterMoveMs?: number; beforeClickMs?: number; afterClickMs?: number };
   };
   cv?: {
@@ -70,6 +92,21 @@ export interface AppSettings {
     /** Параметры объединения сегментов текста (пробелы внутри одной строки) */
     maxWordGapPx?: number;        // максимальный горизонтальный зазор между сегментами для слияния
     maxBaselineDeltaPx?: number;  // допуск по вертикали (по базовой линии), чтобы считать сегменты одной строкой
+    /** OCR-фильтрация распознанного текста внутри bbox */
+    ocr?: {
+      enabled?: boolean;           // включить фильтрацию целей по тексту
+      lang?: string;               // язык OCR, по умолчанию 'eng'
+      psm?: number;                // page segmentation mode, напр. 7 (single line)
+      minConfidence?: number;      // минимальная уверенность (0..100)
+      whitelist?: string;          // допустимые символы (например, только буквы A-Za-z)
+      /** Источник изображения для OCR: бинаризованный (после threshold) или исходный gray */
+      source?: 'gray' | 'binary';
+      /** Отступ (padding) вокруг bbox при вырезке кропа для OCR, в пикселях */
+      padding?: number;
+      maxPerFrame?: number;        // ограничение числа OCR-вызовов за кадр
+      timeoutMs?: number;          // таймаут на один вызов OCR
+      debugSaveCrops?: boolean;    // сохранять вырезки OCR для диагностики
+    };
   };
 }
 
@@ -96,7 +133,13 @@ const DEFAULT_SETTINGS: AppSettings = {
     },
     windowMatch: {},
     serial: { port: '', baudRate: 115200, writeTimeoutMs: 300, readTimeoutMs: 800, retries: 1 },
-    camera: { dxMin: 80, dxMax: 160, pauseMs: 150 },
+    camera: {
+      dxMin: 80, dxMax: 160, pauseMs: 150, scale: 1, repeats: 1,
+      dxStep: 120, circleSteps: 36, stepPauseMs: 120, sweepPauseMs: 500,
+      scrollUpAmount: 1, scrollDownAmount: -1,
+      scrollRandom: false, scrollMin: 1, scrollMax: 15,
+      tiltDyMax: 0,
+    },
     delays: { beforeMoveMs: 0, afterMoveMs: 70, beforeClickMs: 30, afterClickMs: 70 },
   },
   cv: {
@@ -114,6 +157,18 @@ const DEFAULT_SETTINGS: AppSettings = {
     maxHeight: 20,
     maxWordGapPx: 30,
     maxBaselineDeltaPx: 6,
+    ocr: {
+      enabled: false,
+      lang: 'eng',
+      psm: 7,
+      minConfidence: 70,
+      whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz',
+      source: 'binary',
+      padding: 2,
+      maxPerFrame: 6,
+      timeoutMs: 1000,
+      debugSaveCrops: false,
+    },
   },
 };
 
