@@ -9,10 +9,14 @@ import type { IStateContext } from './spoiler/State';
 import { initCV } from './core/CV';
 import { smokeTestContours } from './core/SmokeTest';
 import { Actions } from './core/Actions';
+import { startOverlayServer } from './server/OverlayServer';
 
 // Keep FSM reference for graceful shutdown
 let _fsm: StateMachine | null = null;
 let _shuttingDown = false;
+let _running = false;
+
+function getStateName(): string | undefined { return _fsm?.getCurrentStateName(); }
 
 function setupShutdown(logger: ReturnType<typeof createLogger>) {
   const shutdown = (signal: string) => {
@@ -38,6 +42,14 @@ async function main() {
 
   logger.info('Starting app...');
   setupShutdown(logger);
+
+  // Overlay server
+  const overlay = startOverlayServer(3000, logger, {
+    getStatus: () => ({ running: _running, state: getStateName() }),
+    start: async () => { if (!_running) { await runFSM(logger); } },
+    stop: async () => { _fsm?.stop(); },
+    softExit: () => { _fsm?.stop(); setTimeout(()=>process.exit(0), 200); },
+  });
 
   // Init OpenCV.js (WebAssembly)
   try {
@@ -91,6 +103,12 @@ async function main() {
   }
 
   // Demo: run simple state machine
+  await runFSM(logger);
+
+  logger.info('Done.');
+}
+
+async function runFSM(logger: ReturnType<typeof createLogger>) {
   const ctx: IStateContext = {
     log: (msg: string) => logger.info(msg),
     targets: [],
@@ -98,9 +116,12 @@ async function main() {
   const initial = new BootState();
   const fsm = new StateMachine(initial, ctx);
   _fsm = fsm;
-  await fsm.start(200);
-
-  logger.info('Done.');
+  _running = true;
+  try {
+    await fsm.start(200);
+  } finally {
+    _running = false;
+  }
 }
 
 main().catch((e) => {

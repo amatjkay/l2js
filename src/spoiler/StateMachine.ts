@@ -15,6 +15,11 @@ export class StateMachine {
     this.stopped = true;
   }
 
+  /** Human-readable current state name (if any). */
+  getCurrentStateName(): string | undefined {
+    return this.current?.name;
+  }
+
   async start(maxSteps = 100): Promise<void> {
     let steps = 0;
     while (this.current && steps < maxSteps && !this.stopped) {
