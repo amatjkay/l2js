@@ -100,7 +100,7 @@
       "lang": "eng",
       "psm": 8,
       "minConfidence": 65,
-      "whitelist": "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+      "whitelist": "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
       "maxPerFrame": 6,
       "timeoutMs": 2000,
       "debugSaveCrops": true,

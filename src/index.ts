@@ -15,6 +15,7 @@ import { startOverlayServer } from './server/OverlayServer';
 let _fsm: StateMachine | null = null;
 let _shuttingDown = false;
 let _running = false;
+let _settings = loadSettings();
 
 function getStateName(): string | undefined { return _fsm?.getCurrentStateName(); }
 
@@ -38,77 +39,64 @@ function setupShutdown(logger: ReturnType<typeof createLogger>) {
 async function main() {
   pruneOldLogs(10);
   const logger = createLogger();
-  const settings = loadSettings();
 
-  logger.info('Starting app...');
+  logger.info('Starting app (overlay first)...');
   setupShutdown(logger);
 
   // Overlay server
   const overlay = startOverlayServer(3000, logger, {
     getStatus: () => ({ running: _running, state: getStateName() }),
-    start: async () => { if (!_running) { await runFSM(logger); } },
-    stop: async () => { _fsm?.stop(); },
+    start: async () => { if (!_running) { await runFSM(overlay.logger); overlay.notifyStatus(); } },
+    stop: async () => { _fsm?.stop(); overlay.notifyStatus(); },
     softExit: () => { _fsm?.stop(); setTimeout(()=>process.exit(0), 200); },
+    runTest: async (name: string) => { await runTest(name, overlay.logger); },
+    getConfig: () => _settings,
+    setConfig: async (partial: any) => { _settings = { ..._settings, ...partial }; },
   });
 
+  const log = overlay.logger; // UI-visible logger
+
+  log.info('Overlay ready. Click Start to launch FSM.');
+}
+
+async function runFSM(logger: ReturnType<typeof createLogger> | { info: (m:any)=>void; error: (m:any)=>void; warn?: (m:any)=>void }) {
+  const settings = _settings; // snapshot at start
   // Init OpenCV.js (WebAssembly)
   try {
     await initCV((m) => logger.info(m));
   } catch (e: any) {
     logger.error(`OpenCV.js init failed: ${e?.message || e}`);
   }
-
   // Run CV smoke test
   try {
     await smokeTestContours();
   } catch (e: any) {
     logger.error(`Smoke test failed: ${e?.message || e}`);
   }
-
   // Ensure capture output dir exists
   const outDir = path.resolve(process.cwd(), settings.capture.outputDir);
   if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
-
   try {
     const saved = await captureOnce({
       outputDir: outDir,
       format: settings.capture.format,
       saveLastFrame: settings.capture.saveLastFrame,
     });
-    if (saved) {
-      logger.info(`Captured frame saved to: ${saved}`);
-    } else {
-      logger.info('Captured frame (not saved by config).');
-    }
-  } catch (e: any) {
-    logger.error(`Capture failed: ${e?.message || e}`);
-  }
+    if (saved) { logger.info(`Captured frame saved to: ${saved}`); }
+  } catch (e: any) { logger.error(`Capture failed: ${e?.message || e}`); }
 
-  // Arduino diagnostics (ping/status) before FSM scan — только если реально включены действия и режим arduino
+  // Arduino diagnostics on demand at start
   try {
-    const actCfg = settings.actions || {} as any;
+    const actCfg = settings.actions || ({} as any);
     if (actCfg.enableActions && (actCfg.mode || 'powershell') === 'arduino') {
       const actions = new Actions(actCfg);
       logger.info('==> PING');
-      const pong = await actions.ping();
-      if (pong) logger.info(pong);
+      const pong = await actions.ping(); if (pong) logger.info(pong);
       logger.info('==> STATUS');
-      const st = await actions.status();
-      if (st) logger.info(st);
-    } else {
-      logger.info('Diagnostics skipped (actions disabled or non-arduino mode).');
+      const st = await actions.status(); if (st) logger.info(st);
     }
-  } catch (e: any) {
-    logger.error(`Diagnostics failed: ${e?.message || e}`);
-  }
+  } catch (e: any) { logger.error(`Diagnostics failed: ${e?.message || e}`); }
 
-  // Demo: run simple state machine
-  await runFSM(logger);
-
-  logger.info('Done.');
-}
-
-async function runFSM(logger: ReturnType<typeof createLogger>) {
   const ctx: IStateContext = {
     log: (msg: string) => logger.info(msg),
     targets: [],
@@ -122,6 +110,38 @@ async function runFSM(logger: ReturnType<typeof createLogger>) {
   } finally {
     _running = false;
   }
+}
+
+async function runTest(name: string, logger: { info: (m:any)=>void; error: (m:any)=>void }) {
+  const settings = _settings;
+  if (name === 'capture') {
+    const outDir = path.resolve(process.cwd(), settings.capture.outputDir);
+    if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
+    try {
+      const saved = await captureOnce({ outputDir: outDir, format: settings.capture.format, saveLastFrame: settings.capture.saveLastFrame });
+      logger.info(saved ? `Capture saved: ${saved}` : 'Capture done.');
+    } catch (e: any) { logger.error(`Capture failed: ${e?.message || e}`); }
+    return;
+  }
+  if (name === 'smoke') {
+    try { await smokeTestContours(); logger.info('Smoke test OK'); }
+    catch (e: any) { logger.error(`Smoke test failed: ${e?.message || e}`); }
+    return;
+  }
+  if (name === 'ping') {
+    try {
+      const actCfg = settings.actions || ({} as any);
+      if (actCfg.enableActions && (actCfg.mode || 'powershell') === 'arduino') {
+        const actions = new Actions(actCfg);
+        const pong = await actions.ping(); logger.info(pong || '');
+        const st = await actions.status(); logger.info(st || '');
+      } else {
+        logger.info('Diagnostics skipped (actions disabled or non-arduino mode).');
+      }
+    } catch (e: any) { logger.error(`Diagnostics failed: ${e?.message || e}`); }
+    return;
+  }
+  logger.info(`Unknown test: ${name}`);
 }
 
 main().catch((e) => {
