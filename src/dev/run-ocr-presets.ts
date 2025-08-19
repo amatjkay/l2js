@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { initCV } from '../core/CV';
-import { createLogger, pruneOldLogs } from '../core/Logger';
+import { createLogger } from '../core/Logger';
 import { scanForTargets } from '../core/Scan';
 
 // Глобально гасим неожиданные ошибки от worker_threads (иногда всплывают из сторонних бандлов)
@@ -73,10 +73,12 @@ async function runOnce(label: string, patch: (cfg: any) => void) {
 }
 
 async function main() {
-  pruneOldLogs(10);
+  // Пропускаем чистку логов в утилите пресетов, чтобы избежать конфликтов файловых дескрипторов
   // Preset A
   await runOnce('OCR preset A', (cfg) => {
     cfg.cv.ocr.enabled = true;
+    cfg.cv.ocr.engine = 'native';
+    if (process.env.TESSERACT_PATH) cfg.cv.ocr.tesseractPath = process.env.TESSERACT_PATH;
     cfg.cv.ocr.source = 'binary';
     cfg.cv.ocr.psm = 8;
     cfg.cv.ocr.padding = 4;
@@ -89,6 +91,8 @@ async function main() {
   // Preset B
   await runOnce('OCR preset B', (cfg) => {
     cfg.cv.ocr.enabled = true;
+    cfg.cv.ocr.engine = 'native';
+    if (process.env.TESSERACT_PATH) cfg.cv.ocr.tesseractPath = process.env.TESSERACT_PATH;
     cfg.cv.ocr.source = 'binary';
     cfg.cv.ocr.psm = 7;
     cfg.cv.ocr.padding = 4;

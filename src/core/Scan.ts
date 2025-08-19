@@ -6,6 +6,7 @@ import fs from 'fs';
 import path from 'path';
 import { PNG } from 'pngjs';
 import { createLogger } from './Logger';
+import { runNativeOcr } from '../ocr/NativeTesseract';
 import https from 'https';
 // Загружаем runtime для генераторов, нужен tesseract.js
 try { require('regenerator-runtime/runtime'); } catch {}
@@ -57,20 +58,13 @@ async function getOcrWorker(lang: string, psm: number, whitelist: string): Promi
         const srcShim = path.resolve('src/core/tess-worker-shim.js');
         workerPath = fs.existsSync(distShim) ? distShim : srcShim;
       } catch {}
-      // В tesseract.js corePath должен указывать на JS-лоадер (.wasm.js), рядом с которым лежит бинарный .wasm
-      const candidates = [
-        'tesseract.js-core/tesseract-core-simd-lstm.wasm.js',
-        'tesseract.js-core/tesseract-core-lstm.wasm.js',
-        'tesseract.js-core/tesseract-core.wasm.js',
-      ];
-      for (const c of candidates) {
-        if (corePath) break;
-        try { corePath = require.resolve(c); } catch {}
-      }
-      // Если вдруг получили путь на бинарный .wasm (редкий кейс) — вернёмся к .wasm.js рядом
-      if (corePath && /\.wasm$/i.test(corePath) && !/\.wasm\.js$/i.test(corePath)) {
-        const alt = corePath + '.js';
-        if (fs.existsSync(alt)) corePath = alt;
+      // В tesseract.js corePath желательно указывать как ДИРЕКТОРИЮ с core, чтобы библиотека сама выбрала совместимый glue+wasm
+      try {
+        const jsLoader = require.resolve('tesseract.js-core/tesseract-core.wasm.js');
+        corePath = path.dirname(jsLoader);
+      } catch {}
+      if (!corePath) {
+        try { corePath = path.dirname(require.resolve('tesseract.js-core/package.json')); } catch {}
       }
 
       // Нормализуем язык: tesseract ожидает строку вида "eng" или "eng+rus"
@@ -408,7 +402,7 @@ export async function scanForTargets(): Promise<Target[]> {
   const ocrEnabled: boolean = !!ocrCfg.enabled;
   let afterOcrCount = merged.length;
   const ocrDebug: any[] = [];
-  if (ocrEnabled && merged.length > 0) {
+  if (ocrEnabled && (merged.length > 0 || (ocrCfg.fallbackEnabled !== false))) {
     try {
       const lang: string = ocrCfg.lang || 'eng';
       const psm: number = typeof ocrCfg.psm === 'number' ? ocrCfg.psm : 7;
@@ -420,37 +414,110 @@ export async function scanForTargets(): Promise<Target[]> {
       const source: 'binary' | 'gray' = (ocrCfg.source === 'gray') ? 'gray' : 'binary';
       const pad: number = (typeof ocrCfg.padding === 'number' ? ocrCfg.padding : 2);
       Logger.info(`OCR: source=${source} psm=${psm} minConf=${minConfidence} pad=${pad}`);
-
-      const worker = await getOcrWorker(lang, psm, whitelist);
+      // Поддержка списка целевых имён: принимаем при совпадении даже с чуть меньшей уверенностью
+      const acceptListRaw: string[] = Array.isArray((ocrCfg as any).acceptList) ? (ocrCfg as any).acceptList : [];
+      const norm = (s: string) => s.replace(/[^A-Za-z0-9]/g, '').toLowerCase();
+      const acceptListNorm: string[] = acceptListRaw.map(norm).filter(Boolean);
+      const acceptHard: boolean = !!(ocrCfg as any).acceptHard;
+      const acceptHardMinConf: number = Math.max(0, Math.min(100, Number((ocrCfg as any).acceptHardMinConf ?? 0)));
+      const useNative = (ocrCfg.engine === 'native');
+      let worker: any = null;
+      if (!useNative) {
+        worker = await getOcrWorker(lang, psm, whitelist);
+      }
       const outDir = path.resolve('logs', 'images', `${tStart}`);
       const cropsDir = path.join(outDir, 'ocr_crops');
       if (useDebug || debugSave) {
         ensureDir(outDir);
         ensureDir(cropsDir);
       }
+      // Поддержка fallback: если после merge целей нет, можно запустить диагностический OCR по top-N кандидатов
+      const fallbackEnabled: boolean = (ocrCfg.fallbackEnabled !== false); // по умолчанию включен
+      const fallbackTopN: number = typeof ocrCfg.fallbackTopN === 'number' ? ocrCfg.fallbackTopN : Math.max(1, maxPerFrame);
+      const fallbackSource: 'flat'|'size'|'area' = (ocrCfg.fallbackSource === 'size' || ocrCfg.fallbackSource === 'area') ? ocrCfg.fallbackSource : 'flat';
+      const useFallbackList = merged.length === 0 && fallbackEnabled;
+      let ocrList: Target[] = merged;
+      if (useFallbackList) {
+        let base: Target[] = [];
+        if (fallbackSource === 'size') base = sizeFiltered;
+        else if (fallbackSource === 'area') base = filtered;
+        else base = candidatesAfterFlat;
+        // top-N по площади
+        ocrList = [...base].sort((a,b)=> b.area - a.area).slice(0, fallbackTopN);
+        Logger.info(`OCR fallback active: src=${fallbackSource} count=${ocrList.length}`);
+      }
+
       const tasks: Array<Promise<{ idx: number; ok: boolean; text: string; conf: number }>> = [];
-      const toProcess = merged.slice(0, Math.max(1, maxPerFrame));
+      const toProcess = ocrList.slice(0, Math.max(1, maxPerFrame));
       for (let i = 0; i < toProcess.length; i++) {
         const t = toProcess[i];
-        const srcMat = source === 'binary' ? thrRoi : roiGray;
-        const xr = Math.max(0, Math.min(srcMat.cols - 1, Math.round(t.bbox.x - offX)));
-        const yr = Math.max(0, Math.min(srcMat.rows - 1, Math.round(t.bbox.y - offY)));
-        const wr = Math.max(1, Math.min(srcMat.cols - xr, Math.round(t.bbox.width + pad * 2)));
-        const hr = Math.max(1, Math.min(srcMat.rows - yr, Math.round(t.bbox.height + pad * 2)));
+        // Координаты считаем по матрице roiGray/thrRoi, позже попробуем оба источника
+        const baseMat = roiGray; // для вычисления координат
+        const xr = Math.max(0, Math.min(baseMat.cols - 1, Math.round(t.bbox.x - offX)));
+        const yr = Math.max(0, Math.min(baseMat.rows - 1, Math.round(t.bbox.y - offY)));
+        const wr = Math.max(1, Math.min(baseMat.cols - xr, Math.round(t.bbox.width + pad * 2)));
+        const hr = Math.max(1, Math.min(baseMat.rows - yr, Math.round(t.bbox.height + pad * 2)));
         const xrp = Math.max(0, xr - pad);
         const yrp = Math.max(0, yr - pad);
         const cropName = `ocr_${i + 1}_${xrp}x${yrp}_${wr}x${hr}.png`;
         const cropPath = path.join(cropsDir, cropName);
-        // Сохраняем PNG для OCR (и диагностики при debug)
-        saveGrayCropPng(cropPath, srcMat, xrp, yrp, wr, hr);
-        // Запускаем OCR с таймаутом
+        // Сохраняем PNG для OCR из выбранного пользователем источника для диагностики
+        const diagMat = source === 'binary' ? thrRoi : roiGray;
+        saveGrayCropPng(cropPath, diagMat, xrp, yrp, wr, hr);
+        // Запускаем OCR с таймаутом, пробуем оба источника и выбираем лучший по conf
         const p = (async () => {
           let resText = '';
           let conf = 0;
           try {
-            const ret = await worker.recognize(cropPath);
-            resText = (ret?.data?.text || '').replace(/\r|\n/g, ' ').trim();
-            conf = Math.round(ret?.data?.confidence ?? 0);
+            if (useNative) {
+              const native = await runNativeOcr(cropPath, {
+                tesseractPath: (ocrCfg as any).tesseractPath,
+                lang,
+                psm,
+                whitelist,
+                timeoutMs,
+                mode: 'tsv',
+              });
+              resText = (native.text || '').replace(/\r|\n/g, ' ').trim();
+              conf = Math.round(native.confidence || 0);
+            } else {
+              const tryOne = async (mat: any) => {
+                // Сохраняем временный кроп из выбранной матрицы в отдельный файл
+                const tmpName = `tmp_${i + 1}_${mat === thrRoi ? 'bin' : 'gray'}.png`;
+                const tmpPath = path.join(cropsDir, tmpName);
+                saveGrayCropPng(tmpPath, mat, xrp, yrp, wr, hr);
+                const ret = await worker.recognize(tmpPath);
+                let text = (ret?.data?.text || '').replace(/\r|\n/g, ' ').trim();
+                // Рассчитываем уверенность по словам/символам
+                const words: any[] = Array.isArray(ret?.data?.words) ? ret!.data!.words : [];
+                const symbols: any[] = Array.isArray(ret?.data?.symbols) ? ret!.data!.symbols : [];
+                let c = 0;
+                if (words.length > 0) {
+                  const avg = words.reduce((s, w) => s + (w?.confidence ?? 0), 0) / words.length;
+                  c = Math.round(avg);
+                } else if (symbols.length > 0) {
+                  const avg = symbols.reduce((s, w) => s + (w?.confidence ?? 0), 0) / symbols.length;
+                  c = Math.round(avg);
+                } else {
+                  c = Math.round(ret?.data?.confidence ?? 0);
+                }
+                // Чистим временный файл, если не нужен
+                if (!useDebug && !debugSave) {
+                  try { fs.unlinkSync(tmpPath); } catch {}
+                }
+                return { text, c };
+              };
+              const cand: Array<{text: string; c: number}> = [];
+              // Приоритет — выбранный в настройках источник, затем альтернативный
+              const mats = source === 'binary' ? [thrRoi, roiGray] : [roiGray, thrRoi];
+              for (const m of mats) {
+                try { cand.push(await tryOne(m)); } catch {}
+              }
+              // Выбираем лучший по conf
+              cand.sort((a,b)=> b.c - a.c);
+              resText = (cand[0]?.text || '').trim();
+              conf = cand[0]?.c ?? 0;
+            }
           } catch (e) {
             // ignore, treat as fail
           } finally {
@@ -458,31 +525,53 @@ export async function scanForTargets(): Promise<Target[]> {
               try { fs.unlinkSync(cropPath); } catch {}
             }
           }
-          // Фильтры: только A-Za-z, min length 2, min confidence
-          const onlyLetters = resText.replace(/[^A-Za-z]+/g, '');
-          const ok = onlyLetters.length >= 2 && conf >= minConfidence;
-          return { idx: i, ok, text: onlyLetters, conf };
+          // Фильтры: допустимые символы (буквы/цифры/._-), min length 2, min confidence,
+          // плюс проверка на попадание в список целевых имён (acceptList) с мягким порогом.
+          const textFiltered = resText.replace(/[^A-Za-z0-9_.-]+/g, '');
+          const textNorm = norm(textFiltered);
+          const acceptHit = acceptListNorm.length > 0 && acceptListNorm.some(a => textNorm.includes(a) || a.includes(textNorm));
+          const softConf = Math.max(0, minConfidence - 10);
+          let ok = textFiltered.length >= 2 && (conf >= minConfidence || (acceptHit && conf >= softConf));
+          if (!ok && acceptHit && acceptHard && conf >= acceptHardMinConf) {
+            ok = true;
+            Logger.info(`OCR acceptHard: force-accept text="${textFiltered}" conf=${conf} (>=${acceptHardMinConf})`);
+          }
+          if (acceptHit) {
+            Logger.info(`OCR acceptList hit: text="${textFiltered}" conf=${conf} (soft>=${softConf})`);
+          }
+          return { idx: i, ok, text: textFiltered, conf };
         })();
         tasks.push(p);
       }
       const results = await Promise.all(tasks);
-      // По умолчанию оставляем все боксы, которые не обрабатывались OCR (индексы >= toProcess.length)
-      const allow: boolean[] = merged.map((_, idx) => idx >= toProcess.length);
-      for (let i = 0; i < results.length; i++) {
-        const r = results[i];
-        ocrDebug.push({ index: i + 1, text: r.text, conf: r.conf });
-        allow[r.idx] = r.ok;
+      // Если работали по настоящим merged — фильтруем финальные цели, иначе только логируем диагностику
+      if (!useFallbackList) {
+        // По умолчанию оставляем все боксы, которые не обрабатывались OCR (индексы >= toProcess.length)
+        const allow: boolean[] = merged.map((_, idx) => idx >= toProcess.length);
+        for (let i = 0; i < results.length; i++) {
+          const r = results[i];
+          ocrDebug.push({ index: i + 1, text: r.text, conf: r.conf });
+          allow[r.idx] = r.ok;
+        }
+        ocrFiltered = merged.filter((_, idx) => allow[idx]);
+        afterOcrCount = ocrFiltered.length;
+        Logger.info(`afterOCR: targets=${afterOcrCount} (processed=${results.length})`);
+      } else {
+        for (let i = 0; i < results.length; i++) {
+          const r = results[i];
+          ocrDebug.push({ index: i + 1, text: r.text, conf: r.conf });
+        }
+        Logger.info(`afterOCR (fallback diag): processed=${results.length}`);
       }
-      ocrFiltered = merged.filter((_, idx) => allow[idx]);
-      afterOcrCount = ocrFiltered.length;
-      Logger.info(`afterOCR: targets=${afterOcrCount} (processed=${results.length})`);
     } catch (e) {
       Logger.warn(`OCR step failed: ${e}`);
     }
   }
 
   // Итоговые цели после возможного OCR-фильтра
-  const finalTargets = ocrEnabled ? ocrFiltered : merged;
+  // Если OCR включён, но не дал ни одного совпадения, используем merged как fallback,
+  // чтобы не терять валидные визуальные цели.
+  const finalTargets = ocrEnabled ? (ocrFiltered.length > 0 ? ocrFiltered : merged) : merged;
 
   // Метрики и лог
   const metrics = computeAreaStats(finalTargets.map((t) => t.area));

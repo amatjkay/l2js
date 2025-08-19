@@ -7,8 +7,8 @@
     "debug": true
   },
   "actions": {
-    "enableActions": true,
-    "mode": "arduino",
+    "enableActions": false,
+    "mode": "node",
     "windowMatch": [
       {
         "hwnd": "0x00040686"
@@ -85,7 +85,7 @@
     "minWidth": 20,
     "minHeight": 12,
     "maxWidth": 350,
-    "maxHeight": 50,
+    "maxHeight": 40,
     "maxWordGapPx": 50,
     "maxBaselineDeltaPx": 6,
     "exclusionZones": [],
@@ -96,16 +96,25 @@
       "minSplitWidth": 20
     },
     "ocr": {
-      "enabled": false,
+      "enabled": true,
       "lang": "eng",
-      "psm": 8,
-      "minConfidence": 65,
-      "whitelist": "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
-      "maxPerFrame": 6,
+      "psm": 7,
+      "minConfidence": 50,
+      "whitelist": "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-",
+      "maxPerFrame": 10,
       "timeoutMs": 2000,
       "debugSaveCrops": true,
       "source": "binary",
-      "padding": 4
+      "padding": 10,
+      "acceptList": [
+        "Corpse Candle",
+        "Ratman Leader",
+        "Pitchstone Golem",
+        "Ore Bat"
+      ],
+      "acceptFuzzyMaxDist": 2,
+      "acceptHard": true,
+      "acceptHardMinConf": 0
     }
   }
 }

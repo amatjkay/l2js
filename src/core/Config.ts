@@ -94,11 +94,15 @@ export interface AppSettings {
     maxBaselineDeltaPx?: number;  // допуск по вертикали (по базовой линии), чтобы считать сегменты одной строкой
     /** OCR-фильтрация распознанного текста внутри bbox */
     ocr?: {
+      /** Движок OCR: встроенный tesseract.js или внешний нативный Tesseract */
+      engine?: 'js' | 'native';
       enabled?: boolean;           // включить фильтрацию целей по тексту
       lang?: string;               // язык OCR, по умолчанию 'eng'
       psm?: number;                // page segmentation mode, напр. 7 (single line)
       minConfidence?: number;      // минимальная уверенность (0..100)
       whitelist?: string;          // допустимые символы (например, только буквы A-Za-z)
+      /** Путь к tesseract.exe для режима 'native' (Windows). Если не задан, пробуем стандартный путь и PATH. */
+      tesseractPath?: string;
       /** Источник изображения для OCR: бинаризованный (после threshold) или исходный gray */
       source?: 'gray' | 'binary';
       /** Отступ (padding) вокруг bbox при вырезке кропа для OCR, в пикселях */
@@ -158,11 +162,13 @@ const DEFAULT_SETTINGS: AppSettings = {
     maxWordGapPx: 30,
     maxBaselineDeltaPx: 6,
     ocr: {
+      engine: 'native',
       enabled: false,
       lang: 'eng',
       psm: 7,
       minConfidence: 70,
       whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz',
+      tesseractPath: 'C:/Program Files/Tesseract-OCR/tesseract.exe',
       source: 'binary',
       padding: 2,
       maxPerFrame: 6,
@@ -185,12 +191,15 @@ export function loadSettings(): AppSettings {
     const raw = fs.readFileSync(settingsPath, 'utf-8');
     const parsed = JSON.parse(raw);
     // Deep merge for capture and cv blocks
+    const mergedCv = { ...DEFAULT_SETTINGS.cv, ...(parsed.cv || {}) } as any;
+    // Deep-merge ocr block to preserve defaults like engine/tesseractPath
+    mergedCv.ocr = { ...(DEFAULT_SETTINGS.cv as any).ocr, ...((parsed.cv || {}).ocr || {}) };
     const merged: AppSettings = {
       ...DEFAULT_SETTINGS,
       ...parsed,
       actions: { ...DEFAULT_SETTINGS.actions, ...(parsed.actions || {}) },
       capture: { ...DEFAULT_SETTINGS.capture, ...(parsed.capture || {}) },
-      cv: { ...DEFAULT_SETTINGS.cv, ...(parsed.cv || {}) },
+      cv: mergedCv,
     } as AppSettings;
     return merged;
   } catch (e) {

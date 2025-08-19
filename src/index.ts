@@ -1,5 +1,5 @@
 import path from 'path';
-import { createLogger, pruneOldLogs } from './core/Logger';
+import { createLogger } from './core/Logger';
 import { loadSettings } from './core/Config';
 import { captureOnce } from './core/Capture';
 import fs from 'fs';
@@ -37,7 +37,7 @@ function setupShutdown(logger: ReturnType<typeof createLogger>) {
 }
 
 async function main() {
-  pruneOldLogs(10);
+  // skip pruneOldLogs to avoid file conflicts in parallel runs
   const logger = createLogger();
 
   logger.info('Starting app (overlay first)...');

@@ -16,17 +16,23 @@ export function pruneOldLogs(minutes = 10) {
   for (const file of fs.readdirSync(LOG_DIR)) {
     const full = path.join(LOG_DIR, file);
     try {
+      // Никогда не трогаем текущий агрегированный файл логов
+      if (file === 'app.log') continue;
       const stat = fs.statSync(full);
       if (stat.isFile() && stat.mtimeMs < cutoff) {
         fs.unlinkSync(full);
       }
-    } catch {}
+    } catch (e) {
+      // Игнорируем ошибки прав доступа/удаления
+      // Это безопасно, т.к. чистка логов — best-effort
+    }
   }
 }
 
 export function createLogger() {
   ensureLogDir();
-  pruneOldLogs(10);
+  // Принудительную чистку отключаем здесь, чтобы исключить гонки между несколькими процессами
+  // Пользователь может запустить скрипты параллельно. Оставим отдельной утилите/планировщику.
 
   const timestamp = winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss.SSS' });
   const printfFmt = winston.format.printf((info: winston.Logform.TransformableInfo) => {
@@ -36,13 +42,12 @@ export function createLogger() {
     return `${ts} [${level}] ${msg}`;
   });
 
+  const transports: winston.transport[] = [ new winston.transports.Console() ];
+
   const logger = winston.createLogger({
     level: 'info',
     format: winston.format.combine(timestamp, printfFmt),
-    transports: [
-      new winston.transports.Console(),
-      new winston.transports.File({ filename: path.join(LOG_DIR, 'app.log'), maxsize: 5 * 1024 * 1024, maxFiles: 3 }),
-    ],
+    transports,
   });
 
   return logger;

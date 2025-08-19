@@ -1,10 +1,10 @@
 import { initCV } from '../core/CV';
-import { createLogger, pruneOldLogs } from '../core/Logger';
+import { createLogger } from '../core/Logger';
 import { loadSettings } from '../core/Config';
 import { scanForTargets } from '../core/Scan';
 
 async function main() {
-  pruneOldLogs(10);
+  // skip pruneOldLogs to avoid file conflicts in parallel runs
   const logger = createLogger();
   const settings = loadSettings();
   logger.info('run-scan: init OpenCV...');
