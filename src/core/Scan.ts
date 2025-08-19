@@ -418,6 +418,9 @@ export async function scanForTargets(): Promise<Target[]> {
       const acceptListRaw: string[] = Array.isArray((ocrCfg as any).acceptList) ? (ocrCfg as any).acceptList : [];
       const norm = (s: string) => s.replace(/[^A-Za-z0-9]/g, '').toLowerCase();
       const acceptListNorm: string[] = acceptListRaw.map(norm).filter(Boolean);
+      // Для контроля слипшихся имён допускаем хит только по одному элементу acceptList,
+      // и проверяем близость длины распознанного текста к длине таргета (+/- 4 символа)
+      const acceptLenSlack = 4;
       const acceptHard: boolean = !!(ocrCfg as any).acceptHard;
       const acceptHardMinConf: number = Math.max(0, Math.min(100, Number((ocrCfg as any).acceptHardMinConf ?? 0)));
       const useNative = (ocrCfg.engine === 'native');
@@ -529,7 +532,17 @@ export async function scanForTargets(): Promise<Target[]> {
           // плюс проверка на попадание в список целевых имён (acceptList) с мягким порогом.
           const textFiltered = resText.replace(/[^A-Za-z0-9_.-]+/g, '');
           const textNorm = norm(textFiltered);
-          const acceptHit = acceptListNorm.length > 0 && acceptListNorm.some(a => textNorm.includes(a) || a.includes(textNorm));
+          let bestTarget: string | null = null;
+          let matchCount = 0;
+          if (acceptListNorm.length > 0) {
+            for (const a of acceptListNorm) {
+              if (a.length >= 3 && textNorm.includes(a)) {
+                matchCount++;
+                if (!bestTarget || a.length > bestTarget.length) bestTarget = a;
+              }
+            }
+          }
+          const acceptHit = !!bestTarget && matchCount === 1 && Math.abs(textNorm.length - (bestTarget!.length)) <= acceptLenSlack;
           const softConf = Math.max(0, minConfidence - 10);
           let ok = textFiltered.length >= 2 && (conf >= minConfidence || (acceptHit && conf >= softConf));
           if (!ok && acceptHit && acceptHard && conf >= acceptHardMinConf) {
