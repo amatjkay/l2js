@@ -7,8 +7,8 @@
     "debug": true
   },
   "actions": {
-    "enableActions": false,
-    "mode": "node",
+    "enableActions": true,
+    "mode": "arduino",
     "windowMatch": [
       {
         "hwnd": "0x00040686"
@@ -100,12 +100,12 @@
       "lang": "eng",
       "psm": 7,
       "minConfidence": 50,
-      "whitelist": "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-",
-      "maxPerFrame": 10,
+      "whitelist": "ABCDEFGHIJKLMNOPQRSTUVWXYZ abcdefghijklmnopqrstuvwxyz- ",
+      "maxPerFrame": 12,
       "timeoutMs": 2000,
       "debugSaveCrops": true,
       "source": "binary",
-      "padding": 10,
+      "padding": 8,
       "acceptList": [
         "Corpse Candle",
         "Ratman Leader",
