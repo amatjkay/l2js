@@ -269,6 +269,20 @@ body{font-family:Segoe UI,Arial,sans-serif;background:#0b0f14;color:#e6eef8;marg
     return html.replace('</body>', `<script src="/app.js?v=${encodeURIComponent(buildTag)}"></script></body>`);
   }
 
+  // Start HTTP server and keep the process alive (idempotent)
+  try {
+    if (!server.listening) {
+      server.listen(port, '0.0.0.0', () => {
+        try { emitLog('info', `Overlay server listening on http://localhost:${port}`); } catch {}
+      });
+    } else {
+      try { emitLog('info', `Overlay server already listening on http://localhost:${port}`); } catch {}
+    }
+  } catch (e: any) {
+    try { emitLog('error', `Failed to start overlay server: ${e?.message || String(e)}`); } catch {}
+    // Do not rethrow to avoid crashing app if dev reload hits twice
+  }
+
   return {
     server,
     logger: {

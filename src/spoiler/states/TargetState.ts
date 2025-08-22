@@ -89,8 +89,9 @@ export class TargetState implements IState {
   }
 
   async execute(ctx: IStateContext) {
-    // Заглушка: здесь будет наведение/действие. Пока возвращаемся к IdleState для повторного сканирования.
-    return new IdleState();
+    // После первичного клика переходим в боевое состояние (без повторных ЛКМ)
+    const { LockedCombatState } = await import('./LockedCombatState');
+    return new LockedCombatState();
   }
 
   async exit(): Promise<void> {}

@@ -33,7 +33,6 @@ function setupShutdown(logger: ReturnType<typeof createLogger>) {
   };
   process.on('SIGINT', () => shutdown('SIGINT'));
   process.on('SIGTERM', () => shutdown('SIGTERM'));
-  process.on('beforeExit', () => shutdown('beforeExit'));
 }
 
 async function main() {
