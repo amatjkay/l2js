@@ -66,6 +66,27 @@
       "afterClickMs": 80
     }
   },
+  "combat": {
+    "attackKey": "2",
+    "spoilCombo": ["1"],
+    "spoilEveryMs": 600,
+    "spoilMaxTries": 2,
+    "sweepKey": "3",
+    "sweepMaxTries": 2,
+    "sweepEveryMs": 400,
+    "enableLoot": true,
+    "lootKey": "4",
+    "lootMaxTries": 3,
+    "lootEveryMs": 300,
+    "targetBar": {
+      "roi": { "x": 38, "y": 63, "width": 240, "height": 16 },
+      "hpRed": [255, 0, 0],
+      "hpTol": 18
+    },
+    "chatWindow": {
+      "roi": { "x": 1310, "y": 940, "width": 379, "height": 139 }
+    }
+  },
   "cv": {
     "thresholdValue": 160,
     "thresholdType": "THRESH_BINARY",

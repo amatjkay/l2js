@@ -6,6 +6,10 @@ export interface IStateContext {
   log: (msg: string) => void;
   /** Текущие цели, найденные сканированием (ScanState / scanForTargets). */
   targets: Target[];
+  /** Флаг: текущая цель успешно проспойлена (для перехода к свиперу/луту после убийства). */
+  spoiled?: boolean;
+  /** Локальное состояние свипера для текущего трупа (бэкоффы/счётчики). */
+  sweepState?: Record<string, unknown>;
 }
 
 /**

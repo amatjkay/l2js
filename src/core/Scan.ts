@@ -582,9 +582,13 @@ export async function scanForTargets(): Promise<Target[]> {
   }
 
   // Итоговые цели после возможного OCR-фильтра
-  // Если OCR включён, но не дал ни одного совпадения, используем merged как fallback,
-  // чтобы не терять валидные визуальные цели.
-  const finalTargets = ocrEnabled ? (ocrFiltered.length > 0 ? ocrFiltered : merged) : merged;
+  // Если OCR включён, но не дал ни одного совпадения:
+  // - при strict=true возвращаем пусто (не кликать по неподтверждённым текстом целям)
+  // - при strict=false оставляем fallback на merged, чтобы не терять визуальные цели
+  const strictOCR: boolean = !!(ocrCfg as any).strict;
+  const finalTargets = ocrEnabled
+    ? (ocrFiltered.length > 0 ? ocrFiltered : (strictOCR ? [] : merged))
+    : merged;
 
   // Метрики и лог
   const metrics = computeAreaStats(finalTargets.map((t) => t.area));

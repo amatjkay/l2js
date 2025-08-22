@@ -7,7 +7,7 @@
     "dev": "ts-node src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "ts-node tests/run-tests.ts",
     "wdetect": "ts-node tools/test-window-detection.ts"
   },
   "keywords": [],
@@ -25,6 +25,7 @@
     "winston": "^3.17.0"
   },
   "devDependencies": {
-    "@types/pngjs": "^6.0.5"
+    "@types/pngjs": "^6.0.5",
+    "vitest": "^2.0.5"
   }
 }

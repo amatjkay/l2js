@@ -4,6 +4,12 @@ node_modules/
 # Build output
 dist/
 
+# Captures
+captures/
+
+# Reference
+ref/
+
 # Logs
 logs/
 *.log

@@ -5,6 +5,10 @@ import { loadSettings } from '../../core/Config';
 import { Actions } from '../../core/Actions';
 import { ensureGameActive } from '../../core/FocusGuard';
 import { spawn } from 'child_process';
+import fs from 'fs';
+import path from 'path';
+import { PNG } from 'pngjs';
+import { captureBuffer } from '../../core/Capture';
 
 const Logger = createLogger();
 const sleep = (ms: number) => new Promise<void>(res => setTimeout(res, ms));
@@ -57,6 +61,65 @@ export class TargetState implements IState {
         if (wasClamped) {
           Logger.info(`clamp: (${targetAx},${targetAy}) -> (${axClamped},${ayClamped}) within [${b.x},${b.y},${b.width}x${b.height}]`);
         }
+
+        // Debug: сохраняем click.json и 05_click_marker.png с крестом в точке клика
+        const debugClicks = (settings as any).debugClicks ?? (settings as any).cv?.useDebug ?? false;
+        if (debugClicks) {
+          try {
+            const ts = Date.now();
+            const outDir = path.resolve('logs', 'clicks', `${ts}`);
+            if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
+            const clickInfo = {
+              ts,
+              mode: settings.actions?.mode || 'powershell',
+              screenBounds: b,
+              roi: (settings as any).cv?.roi || null,
+              target: {
+                bbox: t.bbox,
+                cx: t.cx,
+                cy: t.cy,
+                area: t.area,
+              },
+              clickOffsetY,
+              requested: { x: targetAx, y: targetAy },
+              applied: { x: axClamped, y: ayClamped },
+              clamped: wasClamped,
+            };
+            fs.writeFileSync(path.join(outDir, 'click.json'), JSON.stringify(clickInfo, null, 2), 'utf-8');
+
+            // Снимок экрана и прорисовка красного креста в точке клика
+            const buf = await captureBuffer('png');
+            const png = PNG.sync.read(buf as Buffer);
+            const drawCross = (img: PNG, x: number, y: number, color: { r: number; g: number; b: number; a?: number }, size = 12, thickness = 2) => {
+              const { width, height, data } = img;
+              const a = (typeof color.a === 'number' ? color.a : 255);
+              const setPx = (px: number, py: number) => {
+                if (px < 0 || py < 0 || px >= width || py >= height) return;
+                const idx = (py * width + px) * 4;
+                data[idx] = color.r;
+                data[idx + 1] = color.g;
+                data[idx + 2] = color.b;
+                data[idx + 3] = a;
+              };
+              for (let dy = -size; dy <= size; dy++) {
+                for (let t = -Math.floor(thickness/2); t <= Math.floor(thickness/2); t++) {
+                  setPx(x + t, y + dy);
+                }
+              }
+              for (let dx = -size; dx <= size; dx++) {
+                for (let t = -Math.floor(thickness/2); t <= Math.floor(thickness/2); t++) {
+                  setPx(x + dx, y + t);
+                }
+              }
+            };
+            drawCross(png, axClamped, ayClamped, { r: 255, g: 0, b: 0, a: 255 }, 14, 3);
+            const outPng = PNG.sync.write(png);
+            fs.writeFileSync(path.join(outDir, '05_click_marker.png'), outPng);
+            Logger.info(`click debug saved: ${outDir}`);
+          } catch (e) {
+            Logger.warn(`click debug save failed: ${e}`);
+          }
+        }
         if ((settings.actions?.mode || 'powershell') === 'arduino') {
           // Arduino BIGMOVE — относительное перемещение от ТЕКУЩЕЙ позиции курсора.
           // Поэтому вычисляем дельты от текущего курсора, а не от центра экрана.
@@ -89,9 +152,10 @@ export class TargetState implements IState {
   }
 
   async execute(ctx: IStateContext) {
-    // После первичного клика переходим в боевое состояние (без повторных ЛКМ)
-    const { LockedCombatState } = await import('./LockedCombatState');
-    return new LockedCombatState();
+    // После первичного клика переходим в SpoilState (запускаем ATTACK->SPOIL),
+    // далее уже боевое состояние выполнит дожим до убийства
+    const { SpoilState } = await import('./SpoilState');
+    return new SpoilState();
   }
 
   async exit(): Promise<void> {}
