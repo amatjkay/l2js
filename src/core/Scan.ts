@@ -597,17 +597,60 @@ export async function scanForTargets(): Promise<Target[]> {
   if (useDebug) {
     const outDir = path.resolve('logs', 'images', `${tStart}`);
     ensureDir(outDir);
+    // Базовые стадии пайплайна (диагностика)
+    try {
+      // 01_raw_roi.png — исходный ROI в цвете (берём из матрицы полного кадра)
+      const fullBgr = new cv.Mat();
+      cv.cvtColor(matFull, fullBgr, cv.COLOR_RGBA2BGR);
+      const roiConf = cvCfg.roi || { x: 0, y: 0, width: fullBgr.cols, height: fullBgr.rows };
+      const rect = new cv.Rect(
+        Math.max(0, roiConf.x || 0),
+        Math.max(0, roiConf.y || 0),
+        Math.max(1, Math.min(roiConf.width || fullBgr.cols, fullBgr.cols - (roiConf.x || 0))),
+        Math.max(1, Math.min(roiConf.height || fullBgr.rows, fullBgr.rows - (roiConf.y || 0)))
+      );
+      const rawBgr = fullBgr.roi(rect);
+      Logger.info(`debug save: 01_raw_roi.png ${rawBgr.cols}x${rawBgr.rows}`);
+      saveBgrPng(path.join(outDir, '01_raw_roi.png'), rawBgr);
+      rawBgr.delete && rawBgr.delete();
+      fullBgr.delete();
+
+      // 02_gray.png — серый ROI
+      const grayBgr = new cv.Mat();
+      cv.cvtColor(roiGray, grayBgr, cv.COLOR_GRAY2BGR);
+      Logger.info(`debug save: 02_gray.png ${grayBgr.cols}x${grayBgr.rows}`);
+      saveBgrPng(path.join(outDir, '02_gray.png'), grayBgr);
+      grayBgr.delete();
+
+      // 03_threshold.png — бинаризация
+      const thrBgr = new cv.Mat();
+      cv.cvtColor(thrRoi, thrBgr, cv.COLOR_GRAY2BGR);
+      Logger.info(`debug save: 03_threshold.png ${thrBgr.cols}x${thrBgr.rows}`);
+      saveBgrPng(path.join(outDir, '03_threshold.png'), thrBgr);
+      thrBgr.delete();
+
+      // 04_morph_close.png — морф. закрытие
+      const clBgr = new cv.Mat();
+      cv.cvtColor(closedRoi, clBgr, cv.COLOR_GRAY2BGR);
+      Logger.info(`debug save: 04_morph_close.png ${clBgr.cols}x${clBgr.rows}`);
+      saveBgrPng(path.join(outDir, '04_morph_close.png'), clBgr);
+      clBgr.delete();
+    } catch (e) {
+      Logger.warn(`Failed to save stage images: ${e}`);
+    }
     try {
       // 03_threshold_overlay.png
       const thrColor = new cv.Mat();
       cv.cvtColor(thrRoi, thrColor, cv.COLOR_GRAY2BGR);
       drawBoxesOnBgrMat(thrColor, finalTargets, offX, offY, new cv.Scalar(0, 255, 0, 255), 2, cv);
+      Logger.info(`debug save: 03_threshold_overlay.png ${thrColor.cols}x${thrColor.rows}`);
       saveBgrPng(path.join(outDir, '03_threshold_overlay.png'), thrColor);
 
       // 04_morph_close_overlay.png
       const clColor = new cv.Mat();
       cv.cvtColor(closedRoi, clColor, cv.COLOR_GRAY2BGR);
       drawBoxesOnBgrMat(clColor, finalTargets, offX, offY, new cv.Scalar(0, 255, 0, 255), 2, cv);
+      Logger.info(`debug save: 04_morph_close_overlay.png ${clColor.cols}x${clColor.rows}`);
       saveBgrPng(path.join(outDir, '04_morph_close_overlay.png'), clColor);
 
       thrColor.delete();
@@ -824,6 +867,20 @@ function saveBgrPng(filePath: string, matBgr: any) {
     rgba[j + 2] = b;
     rgba[j + 3] = 255;
   }
+  // Сначала пробуем синхронную запись
+  try {
+    const png = new PNG({ width, height });
+    png.data = Buffer.from(rgba);
+    const anyPNG: any = PNG as any;
+    if (anyPNG && anyPNG.sync && typeof anyPNG.sync.write === 'function') {
+      const buf = anyPNG.sync.write(png);
+      fs.writeFileSync(filePath, buf);
+      return;
+    }
+  } catch (e) {
+    // если синхронная запись не удалась — пойдём потоковым способом ниже
+  }
+  // Фолбэк: асинхронная потоковая запись
   const png = new PNG({ width, height });
   png.data = Buffer.from(rgba);
   const out = fs.createWriteStream(filePath);
