@@ -7,6 +7,7 @@ export interface NativeOcrOptions {
   lang?: string; // e.g. 'eng' or 'eng+rus'
   psm?: number;  // page segmentation mode
   whitelist?: string; // tessedit_char_whitelist
+  oem?: number; // OCR Engine Mode (0..3), default 1 (LSTM only)
   timeoutMs?: number; // kill process if exceeds
   mode?: 'text' | 'tsv'; // output parsing mode
 }
@@ -36,8 +37,9 @@ export async function runNativeOcr(imagePath: string, opt: NativeOcrOptions = {}
   if (typeof opt.whitelist === 'string' && opt.whitelist.length > 0) {
     args.push('-c', `tessedit_char_whitelist=${opt.whitelist}`);
   }
-  // default OEM 1 (LSTM only) is usually good
-  args.push('--oem', '1');
+  // OEM: по умолчанию 1 (LSTM only), но можно задать в опциях
+  const oem = (typeof opt.oem === 'number' && opt.oem >= 0) ? String(opt.oem) : '1';
+  args.push('--oem', oem);
 
   const proc = spawn(exe, args, { windowsHide: true });
 

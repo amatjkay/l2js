@@ -145,84 +145,104 @@
   // Компьютерное зрение и OCR
   "cv": {
     // Порог бинаризации (0–255)
-    "thresholdValue": 160,
-    // Тип порогования
+    "thresholdValue": 110,
+    // Тип порогования: оставляем ЧЁРНЫЙ ТЕКСТ на БЕЛОМ как на 03_threshold_overlay
     "thresholdType": "THRESH_BINARY",
     // Размер ядра морфологии [w,h]
-    "morphKernelSize": [24, 4],
+    // Лёгкая горизонтальная «склейка» контура обводки букв
+    "morphKernelSize": [1, 5],
     // Форма структурного элемента морфологии
     "morphShape": "MORPH_RECT",
     // Регион интереса (кадрирование экрана для анализа)
     "roi": { "x": 0, "y": 120, "width": 1920, "height": 740 },
 
     // Ограничения по площади и геометрии боксов (отсев мусора)
-    "minArea": 40,
-    "maxArea": 10000,
-    "minWidth": 30,
-    "minHeight": 15,
-    "maxWidth": 350,
-    "maxHeight": 30,
+    "minArea": 1,
+    "maxArea": 20000,
+    "minWidth": 12,
+    "minHeight": 10,
+    "maxWidth": 1200,
+    "maxHeight": 60,
 
     // Параметры объединения слов в одну линию
-    "maxWordGapPx": 50,         // макс. горизонтальный зазор между сегментами
-    "maxBaselineDeltaPx": 6,    // макс. разница базовой линии (по Y)
+    "maxWordGapPx": 60,         // макс. горизонтальный зазор между сегментами
+    "maxBaselineDeltaPx": 6,    // допуск по вертикали (расхождение базовой линии)
 
     // Зоны-исключения (центры боксов внутри — отбрасываются)
+    // Временно отключено для диагностики OCR-фильтрации
     "exclusionZones": [],
+
+    // Вертикальная полоса, где ожидаются ники мобов (внутри ROI)
+    // Временно расширена на весь ROI для диагностики OCR
+    "yBand": { "min": 0, "max": 740 },
 
     // Эвристики «ровности» для сплита слитых боксов
     "flatness": {
-      "stdThreshold": 1.2,   // порог СКО «ровности»
+      "stdThreshold": 1.5,   // порог СКО «ровности»
       "minFlatRatio": 0.6,   // минимальная доля «ровных» точек
-      "minValleyRatio": 0.45,// минимальная доля высоты «долины» для split
-      "minSplitWidth": 20    // минимальная ширина сегмента после split
+      "minValleyRatio": 0.38,// минимальная доля высоты «долины» для split
+      "minSplitWidth": 24    // минимальная ширина сегмента после split
     },
 
     // Настройки OCR
     "ocr": {
       // Включить OCR-фильтрацию целей
       "enabled": true,
+      // Движок OCR: 'native' для использования tesseract.exe
+      "engine": "native",
       // Язык OCR
       "lang": "eng",
       // Page Segmentation Mode (обычно 7 — одна строка)
       "psm": 7,
+      // Режим движка OCR (LSTM): 1 — LSTM Only, 3 — Default
+      "oem": 1,
       // Минимальная уверенность распознавания (0–100)
-      "minConfidence": 50,
+      "minConfidence": 25,
       // Белый список символов
-      "whitelist": "ABCDEFGHIJKLMNOPQRSTUVWXYZ abcdefghijklmnopqrstuvwxyz ",
+      "whitelist": "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz ",
       // Максимум кропов в OCR на кадр
-      "maxPerFrame": 12,
+      "maxPerFrame": 60,
       // Таймаут на один OCR-вызов (мс)
-      "timeoutMs": 2000,
+      "timeoutMs": 600,
+      // Явный путь к tesseract.exe (native OCR)
+      "tesseractPath": "C:\\Program Files\\Tesseract-OCR\\tesseract.exe",
       // Сохранять кропы OCR для диагностики
       "debugSaveCrops": true,
-      // Источник изображения для OCR: бинаризованный или gray
+      // Источник изображения для OCR: бинаризованный
       "source": "binary",
       // Отступ вокруг bbox при кропе (пиксели)
-      "padding": 8,
+      "padding": 12,
+      // Дополнительная предобработка
+      // Для чёрного текста на белом инверсия не нужна
+      "invert": false,
+      "resize": 4,
+      "resizeInter": "INTER_NEAREST",
+      "clahe": { "enable": true, "clipLimit": 2.5, "tileGrid": 8 },
 
       // Список целевых имён для приёма (аккуратный whitelist)
       "acceptList": [
         "Corpse Candle",
         "Ratman Leader",
         "Pitchstone Golem",
-        "Ore Bat"
+        "Ore Bat",
+        "Dion Grizzly",
+        "Hobgoblin",
+        "Tumran Bugbear",
+        "Monster Eye Searcher"
       ],
       // Допуск «нечёткого» совпадения (расстояние Левенштейна)
       "acceptFuzzyMaxDist": 2,
       // Жёстко принимать имена из списка acceptList
       "acceptHard": true,
       // Минимальная уверенность для жёсткого приёма
-      "acceptHardMinConf": 0
+      "acceptHardMinConf": 0,
 
-      // Дополнительно (можно включить, раскомментировав строки ниже):
-      // "strict": true,           // Строгий OCR: если ни один бокс не подтверждён — целей нет
-    }
-
+      // Дополнительно
+      "strict": true            // Строгий OCR: если ни один бокс не подтверждён — целей нет
+    },
     // Расширенная отладка CV (сохранение overlay и стадий пайплайна)
-    // "useDebug": true
-  }
-
+    "useDebug": true
+  },
   // Глобальный флаг сохранения маркеров клика (click.json и 05_click_marker.png)
-  // "debugClicks": true
+  "debugClicks": true
 }

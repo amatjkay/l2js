@@ -194,6 +194,59 @@ function saveGrayCropPng(filePath: string, matGray: any, x: number, y: number, w
   png.pack().pipe(out);
 }
 
+// Вырезает серый кроп из исходной матрицы (GRAY) как отдельную матрицу
+function extractGrayCropMat(matGray: any, x: number, y: number, w: number, h: number, cvRef: any): any {
+  const xr = Math.max(0, Math.min(matGray.cols - 1, x));
+  const yr = Math.max(0, Math.min(matGray.rows - 1, y));
+  const wr = Math.max(1, Math.min(matGray.cols - xr, w));
+  const hr = Math.max(1, Math.min(matGray.rows - yr, h));
+  const rect = new cvRef.Rect(xr, yr, wr, hr);
+  const roi = matGray.roi(rect);
+  const out = new cvRef.Mat();
+  roi.copyTo(out);
+  roi.delete && roi.delete();
+  return out;
+}
+
+// Применяет предобработку к серой матрице для OCR
+function preprocessForOcr(gray: any, cvRef: any, cfg: {
+  invert: boolean;
+  claheEnabled: boolean;
+  claheClipLimit: number;
+  claheTile: [number, number];
+  upscale: number; // кратность, >1 включает
+  resizeInter: number; // cv.INTER_*
+}): any {
+  let mat = gray; // владение передаём вызывающему; будем создавать новые матрицы по мере надобности
+  // CLAHE по необходимости
+  if (cfg.claheEnabled) {
+    try {
+      const clahe = new cvRef.CLAHE(cfg.claheClipLimit, new cvRef.Size(cfg.claheTile[0], cfg.claheTile[1]));
+      const dst = new cvRef.Mat();
+      clahe.apply(mat, dst);
+      if (mat !== gray) mat.delete && mat.delete();
+      mat = dst;
+    } catch {}
+  }
+  // Invert по необходимости
+  if (cfg.invert) {
+    const dst = new cvRef.Mat();
+    cvRef.bitwise_not(mat, dst);
+    if (mat !== gray) mat.delete && mat.delete();
+    mat = dst;
+  }
+  // Upscale по необходимости
+  if (typeof cfg.upscale === 'number' && cfg.upscale > 1) {
+    const dst = new cvRef.Mat();
+    const fx = cfg.upscale;
+    const fy = cfg.upscale;
+    cvRef.resize(mat, dst, new cvRef.Size(0, 0), fx, fy, cfg.resizeInter);
+    if (mat !== gray) mat.delete && mat.delete();
+    mat = dst;
+  }
+  return mat;
+}
+
 /**
  * Выполняет сканирование экрана с использованием параметров из settings.json
  * и возвращает список целей (bbox, площадь, центр масс) в координатах ROI.
@@ -407,13 +460,36 @@ export async function scanForTargets(): Promise<Target[]> {
       const lang: string = ocrCfg.lang || 'eng';
       const psm: number = typeof ocrCfg.psm === 'number' ? ocrCfg.psm : 7;
       const minConfidence: number = typeof ocrCfg.minConfidence === 'number' ? ocrCfg.minConfidence : 70;
+      // Минимальная длина текста после пост-фильтрации
+      const minLength: number = typeof (ocrCfg as any).minLength === 'number' ? Math.max(1, Math.floor((ocrCfg as any).minLength)) : 3;
       const whitelist: string = ocrCfg.whitelist || 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
       const maxPerFrame: number = typeof ocrCfg.maxPerFrame === 'number' ? ocrCfg.maxPerFrame : 6;
       const timeoutMs: number = typeof ocrCfg.timeoutMs === 'number' ? ocrCfg.timeoutMs : 1000;
       const debugSave: boolean = !!ocrCfg.debugSaveCrops;
       const source: 'binary' | 'gray' = (ocrCfg.source === 'gray') ? 'gray' : 'binary';
       const pad: number = (typeof ocrCfg.padding === 'number' ? ocrCfg.padding : 2);
-      Logger.info(`OCR: source=${source} psm=${psm} minConf=${minConfidence} pad=${pad}`);
+      // Предобработка
+      const invert: boolean = !!(ocrCfg.invert || (ocrCfg.pre && ocrCfg.pre.invert));
+      const claheCfgRaw: any = (ocrCfg.pre && ocrCfg.pre.clahe) ? ocrCfg.pre.clahe : (ocrCfg.clahe || {});
+      // Совместимость по именам полей: enable -> enabled, tileGrid -> tileGridSize
+      const claheEnabled: boolean = typeof claheCfgRaw.enabled === 'boolean' ? !!claheCfgRaw.enabled
+        : (typeof claheCfgRaw.enable === 'boolean' ? !!claheCfgRaw.enable : false);
+      const claheClipLimit: number = typeof claheCfgRaw.clipLimit === 'number' ? claheCfgRaw.clipLimit : 2.0;
+      const tileN = (typeof claheCfgRaw.tileGrid === 'number') ? Math.max(1, Math.floor(claheCfgRaw.tileGrid)) : undefined;
+      const tileArr = (Array.isArray(claheCfgRaw.tileGridSize) && claheCfgRaw.tileGridSize.length === 2)
+        ? [Math.max(1, Math.floor(claheCfgRaw.tileGridSize[0])), Math.max(1, Math.floor(claheCfgRaw.tileGridSize[1]))]
+        : undefined;
+      const claheTile: [number, number] = (tileArr as any) || (tileN ? [tileN, tileN] : [8, 8]);
+      // Совместимость resize -> upscale, а также поддержка pre.upscale
+      const upscale: number = ((): number => {
+        const v = (ocrCfg.pre && typeof ocrCfg.pre.upscale === 'number') ? ocrCfg.pre.upscale
+          : (typeof (ocrCfg as any).upscale === 'number' ? (ocrCfg as any).upscale
+            : (typeof (ocrCfg as any).resize === 'number' ? (ocrCfg as any).resize : 0));
+        return Number(v) || 0;
+      })();
+      const resizeInter: number = (ocrCfg.resizeInter === 'INTER_NEAREST') ? (getCV().INTER_NEAREST) : (getCV().INTER_LINEAR);
+      Logger.info(`OCR pre: invert=${invert} clahe=${claheEnabled} (clip=${claheClipLimit}, tile=${claheTile[0]}x${claheTile[1]}) upscale=${upscale} inter=${ocrCfg.resizeInter || 'INTER_LINEAR'}`);
+      Logger.info(`OCR: source=${source} psm=${psm} minConf=${minConfidence} minLen=${minLength} pad=${pad}`);
       // Поддержка списка целевых имён: принимаем при совпадении даже с чуть меньшей уверенностью
       const acceptListRaw: string[] = Array.isArray((ocrCfg as any).acceptList) ? (ocrCfg as any).acceptList : [];
       const norm = (s: string) => s.replace(/[^A-Za-z0-9]/g, '').toLowerCase();
@@ -455,18 +531,30 @@ export async function scanForTargets(): Promise<Target[]> {
       for (let i = 0; i < toProcess.length; i++) {
         const t = toProcess[i];
         // Координаты считаем по матрице roiGray/thrRoi, позже попробуем оба источника
-        const baseMat = roiGray; // для вычисления координат
-        const xr = Math.max(0, Math.min(baseMat.cols - 1, Math.round(t.bbox.x - offX)));
-        const yr = Math.max(0, Math.min(baseMat.rows - 1, Math.round(t.bbox.y - offY)));
-        const wr = Math.max(1, Math.min(baseMat.cols - xr, Math.round(t.bbox.width + pad * 2)));
-        const hr = Math.max(1, Math.min(baseMat.rows - yr, Math.round(t.bbox.height + pad * 2)));
+        const coordBaseMat = roiGray; // для вычисления координат
+        const xr = Math.max(0, Math.min(coordBaseMat.cols - 1, Math.round(t.bbox.x - offX)));
+        const yr = Math.max(0, Math.min(coordBaseMat.rows - 1, Math.round(t.bbox.y - offY)));
+        const wr = Math.max(1, Math.min(coordBaseMat.cols - xr, Math.round(t.bbox.width + pad * 2)));
+        const hr = Math.max(1, Math.min(coordBaseMat.rows - yr, Math.round(t.bbox.height + pad * 2)));
         const xrp = Math.max(0, xr - pad);
         const yrp = Math.max(0, yr - pad);
         const cropName = `ocr_${i + 1}_${xrp}x${yrp}_${wr}x${hr}.png`;
         const cropPath = path.join(cropsDir, cropName);
-        // Сохраняем PNG для OCR из выбранного пользователем источника для диагностики
-        const diagMat = source === 'binary' ? thrRoi : roiGray;
-        saveGrayCropPng(cropPath, diagMat, xrp, yrp, wr, hr);
+        // Готовим кроп с предобработкой из выбранного источника
+        const srcBaseMat = source === 'binary' ? thrRoi : roiGray;
+        let cropMat = extractGrayCropMat(srcBaseMat, xrp, yrp, wr, hr, cv);
+        let procMat = preprocessForOcr(cropMat, cv, {
+          invert,
+          claheEnabled,
+          claheClipLimit,
+          claheTile,
+          upscale,
+          resizeInter,
+        });
+        // сохраняем итоговый кроп
+        try { saveGrayCropPng(cropPath, procMat, 0, 0, procMat.cols, procMat.rows); } catch {}
+        if (procMat && procMat !== cropMat) { try { procMat.delete(); } catch {} }
+        if (cropMat) { try { cropMat.delete(); } catch {} }
         // Запускаем OCR с таймаутом, пробуем оба источника и выбираем лучший по conf
         const p = (async () => {
           let resText = '';
@@ -480,17 +568,28 @@ export async function scanForTargets(): Promise<Target[]> {
                 whitelist,
                 timeoutMs,
                 mode: 'tsv',
+                oem: typeof (ocrCfg as any).oem === 'number' ? (ocrCfg as any).oem : undefined,
               });
-              resText = (native.text || '').replace(/\r|\n/g, ' ').trim();
+              // Нормализуем пробелы и обрезаем
+              resText = (native.text || '')
+                .replace(/\r|\n/g, ' ')
+                .replace(/\s+/g, ' ')
+                .trim();
               conf = Math.round(native.confidence || 0);
             } else {
               const tryOne = async (mat: any) => {
-                // Сохраняем временный кроп из выбранной матрицы в отдельный файл
+                // Сохраняем временный кроп из указанной матрицы (с предобработкой)
                 const tmpName = `tmp_${i + 1}_${mat === thrRoi ? 'bin' : 'gray'}.png`;
                 const tmpPath = path.join(cropsDir, tmpName);
-                saveGrayCropPng(tmpPath, mat, xrp, yrp, wr, hr);
+                let cm = extractGrayCropMat(mat, xrp, yrp, wr, hr, cv);
+                let pm = preprocessForOcr(cm, cv, { invert, claheEnabled, claheClipLimit, claheTile, upscale, resizeInter });
+                saveGrayCropPng(tmpPath, pm, 0, 0, pm.cols, pm.rows);
                 const ret = await worker.recognize(tmpPath);
-                let text = (ret?.data?.text || '').replace(/\r|\n/g, ' ').trim();
+                // Нормализуем пробелы и обрезаем
+                let text = (ret?.data?.text || '')
+                  .replace(/\r|\n/g, ' ')
+                  .replace(/\s+/g, ' ')
+                  .trim();
                 // Рассчитываем уверенность по словам/символам
                 const words: any[] = Array.isArray(ret?.data?.words) ? ret!.data!.words : [];
                 const symbols: any[] = Array.isArray(ret?.data?.symbols) ? ret!.data!.symbols : [];
@@ -508,6 +607,8 @@ export async function scanForTargets(): Promise<Target[]> {
                 if (!useDebug && !debugSave) {
                   try { fs.unlinkSync(tmpPath); } catch {}
                 }
+                if (pm && pm !== cm) { try { pm.delete(); } catch {} }
+                if (cm) { try { cm.delete(); } catch {} }
                 return { text, c };
               };
               const cand: Array<{text: string; c: number}> = [];
@@ -528,7 +629,7 @@ export async function scanForTargets(): Promise<Target[]> {
               try { fs.unlinkSync(cropPath); } catch {}
             }
           }
-          // Фильтры: допустимые символы (буквы/цифры/._-), min length 2, min confidence,
+          // Фильтры: допустимые символы (буквы/цифры/._-), min length (configurable), min confidence,
           // плюс проверка на попадание в список целевых имён (acceptList) с мягким порогом.
           const textFiltered = resText.replace(/[^A-Za-z0-9_.-]+/g, '');
           const textNorm = norm(textFiltered);
@@ -544,7 +645,7 @@ export async function scanForTargets(): Promise<Target[]> {
           }
           const acceptHit = !!bestTarget && matchCount === 1 && Math.abs(textNorm.length - (bestTarget!.length)) <= acceptLenSlack;
           const softConf = Math.max(0, minConfidence - 10);
-          let ok = textFiltered.length >= 2 && (conf >= minConfidence || (acceptHit && conf >= softConf));
+          let ok = textFiltered.length >= minLength && (conf >= minConfidence || (acceptHit && conf >= softConf));
           if (!ok && acceptHit && acceptHard && conf >= acceptHardMinConf) {
             ok = true;
             Logger.info(`OCR acceptHard: force-accept text="${textFiltered}" conf=${conf} (>=${acceptHardMinConf})`);
@@ -646,14 +747,14 @@ export async function scanForTargets(): Promise<Target[]> {
       // 03_threshold_overlay.png
       const thrColor = new cv.Mat();
       cv.cvtColor(thrRoi, thrColor, cv.COLOR_GRAY2BGR);
-      drawBoxesOnBgrMat(thrColor, finalTargets, offX, offY, new cv.Scalar(0, 255, 0, 255), 2, cv);
+      drawBoxesOnBgrMat(thrColor, finalTargets, offX, offY, new cv.Scalar(255, 0, 255, 255), 2, cv);
       Logger.info(`debug save: 03_threshold_overlay.png ${thrColor.cols}x${thrColor.rows}`);
       saveBgrPng(path.join(outDir, '03_threshold_overlay.png'), thrColor);
 
       // 04_morph_close_overlay.png
       const clColor = new cv.Mat();
       cv.cvtColor(closedRoi, clColor, cv.COLOR_GRAY2BGR);
-      drawBoxesOnBgrMat(clColor, finalTargets, offX, offY, new cv.Scalar(0, 255, 0, 255), 2, cv);
+      drawBoxesOnBgrMat(clColor, finalTargets, offX, offY, new cv.Scalar(255, 0, 255, 255), 2, cv);
       Logger.info(`debug save: 04_morph_close_overlay.png ${clColor.cols}x${clColor.rows}`);
       saveBgrPng(path.join(outDir, '04_morph_close_overlay.png'), clColor);
 
